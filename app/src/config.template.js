@@ -467,7 +467,7 @@ module.exports = {
         keySecret: process.env.API_SECRET || 'mirotalksfu_default_secret',
         allowed: {
             stats: process.env.API_ALLOW_STATS !== 'false',
-            meetings: false,
+            meetings: true,
             meeting: true,
             join: true,
             token: false,
