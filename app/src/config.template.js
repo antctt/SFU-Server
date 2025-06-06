@@ -155,6 +155,7 @@ module.exports = {
          * Core Settings:
          * ------------------------
          * - enabled        : Enable recording functionality
+         * - uploadToS3     : Upload recording to AWS S3 bucket [true/false]
          * - endpoint       : Leave empty ('') to store recordings locally OR
          *   - Set to a valid URL (e.g., 'http://localhost:8080/') to:
          *      - Push recordings to a remote server
@@ -173,6 +174,7 @@ module.exports = {
          */
         recording: {
             enabled: process.env.RECORDING_ENABLED === 'true',
+            uploadToS3: process.env.RECORDING_UPLOAD_TO_S3 === 'true',
             endpoint: process.env.RECORDING_ENDPOINT || '',
             dir: 'rec',
             maxFileSize: 1 * 1024 * 1024 * 1024, // 1GB
@@ -321,14 +323,14 @@ module.exports = {
             baseURLDynamic: false, // Set true if your app has dynamic base URLs
 
             // ==================================================================================================
-            allow_rooms_creation_for_auth_users: process.env.OIDC_ALLOW_ROOMS_CREATION_FOR_AUTH_USERS === 'true',
+            allow_rooms_creation_for_auth_users: process.env.OIDC_ALLOW_ROOMS_CREATION_FOR_AUTH_USERS !== 'false',
             // ==================================================================================================
 
             // User identity requirements
             peer_name: {
-                force: true, // Require identity provider authentication
-                email: true, // Request email claim
-                name: false, // Don't require full name
+                force: process.env.OIDC_USERNAME_FORCE !== 'false', // Forces the username to match the OIDC email or name. If true, the user won't be able to change their name when joining a room
+                email: process.env.OIDC_USERNAME_AS_EMAIL !== 'false', // Uses the OIDC email as the username.
+                name: process.env.OIDC_USERNAME_AS_NAME === 'true', // Uses the OIDC name as the username
             },
 
             // Provider configuration
@@ -363,38 +365,47 @@ module.exports = {
          * Host Protection Configuration
          * ============================
          * Controls access to host-level functionality and room management.
-         * Supports multiple authentication methods including local users and API-based validation.
          *
-         * Core Protection Settings:
-         * -------------------------
-         * - protected          : Enable/disable host protection globally
-         * - user_auth          : Require user authentication for host access
-         * - users_from_db      : Fetch authorized users from database/API instead of local config (eg., MiroTalk WEB)
+         * Authentication Methods:
+         * ----------------------
+         * - Local users (defined in config or via HOST_USERS env variable)
+         * - API/database validation (users_from_db=true)
+         *
+         * Core Settings:
+         * --------------
+         * - protected      : Enable/disable host protection globally
+         * - user_auth      : Require user authentication for host access
+         * - users_from_db  : Fetch users from API/database instead of local config
          *
          * API Integration:
-         * ----------------
-         * - users_api_secret_key     : Secret key for API authentication
-         * - users_api_endpoint       : Endpoint to validate user credentials
-         * - users_api_room_allowed   : Endpoint to check if user can access specific room
-         * - users_api_rooms_allowed  : Endpoint to get list of allowed rooms for user
-         * - api_room_exists          : Endpoint to verify if room exists
+         * ---------------
+         * - users_api_secret_key    : Secret key for API authentication
+         * - users_api_endpoint      : Endpoint to validate user credentials
+         * - users_api_room_allowed  : Endpoint to check if user can access a room
+         * - users_api_rooms_allowed : Endpoint to get allowed rooms for a user
+         * - api_room_exists         : Endpoint to verify if a room exists
          *
          * Local User Configuration:
-         * -------------------------
-         * - users             : Array of authorized users (used when users_from_db=false)
-         *   - username        : Login username
-         *   - password        : Login password
-         *   - displayname     : User's display name
-         *   - allowed_rooms   : List of rooms user can access ('*' for all rooms)
+         * ------------------------
+         * - users: Array of authorized users (used if users_from_db=false)
+         *   - Define via HOST_USERS env variable:
+         *     HOST_USERS=username:password:displayname:room1,room2|username2:password2:displayname2:*
+         *     (Each user separated by '|', fields by ':', allowed_rooms comma-separated or '*' for all)
+         *   - If HOST_USERS is not set, falls back to DEFAULT_USERNAME, DEFAULT_PASSWORD, etc.
+         *   - Fields:
+         *     - username      : Login username
+         *     - password      : Login password
+         *     - displayname   : User's display name
+         *     - allowed_rooms : List of rooms user can access ('*' for all)
          *
          * Presenter Management:
          * --------------------
-         * - list               : Array of usernames who can be presenters
-         * - join_first         : First joiner becomes presenter [true/false] default true
+         * - list        : Array of usernames who can be presenters
+         * - join_first  : First joiner becomes presenter (default: true)
          *
          * Documentation:
-         * --------------
-         * - https://docs.mirotalk.com/mirotalk-sfu/host-protection/
+         * -------------
+         * https://docs.mirotalk.com/mirotalk-sfu/host-protection/
          */
         host: {
             protected: process.env.HOST_PROTECTED === 'true',
@@ -409,19 +420,41 @@ module.exports = {
                 process.env.USERS_ROOMS_ALLOWED_ENDPOINT || 'http://localhost:9000/api/v1/user/roomsAllowed', // 'https://webrtc.mirotalk.com/api/v1/user/roomsAllowed'
             api_room_exists: process.env.ROOM_EXISTS_ENDPOINT || 'http://localhost:9000/api/v1/room/exists', // 'https://webrtc.mirotalk.com//api/v1/room/exists'
 
-            users: [
-                {
-                    username: process.env.DEFAULT_USERNAME || 'username',
-                    password: process.env.DEFAULT_PASSWORD || 'password',
-                    displayname: process.env.DEFAULT_DISPLAY_NAME || 'username display name',
-                    allowed_rooms: process.env.DEFAULT_ALLOWED_ROOMS
-                        ? process.env.DEFAULT_ALLOWED_ROOMS.split(splitChar)
-                              .map((room) => room.trim())
-                              .filter((room) => room !== '')
-                        : ['*'],
-                },
-                // Additional users can be added here
-            ],
+            users: process.env.HOST_USERS
+                ? process.env.HOST_USERS.split('|').map((userStr) => {
+                      const [username, password, displayname, allowedRoomsStr] = userStr.split(':');
+                      return {
+                          username: username || '',
+                          password: password || '',
+                          displayname: displayname || '',
+                          allowed_rooms: allowedRoomsStr
+                              ? allowedRoomsStr
+                                    .split(',')
+                                    .map((room) => room.trim())
+                                    .filter((room) => room !== '')
+                              : ['*'],
+                      };
+                  })
+                : [
+                      {
+                          username: 'username',
+                          password: 'password',
+                          displayname: 'username displayname',
+                          allowed_rooms: ['*'],
+                      },
+                      {
+                          username: 'username2',
+                          password: 'password2',
+                          displayname: 'username2 displayname',
+                          allowed_rooms: ['room1', 'room2'],
+                      },
+                      {
+                          username: 'username3',
+                          password: 'password3',
+                          displayname: 'username3 displayname',
+                      },
+                      //...
+                  ],
 
             presenters: {
                 list: process.env.PRESENTERS
@@ -501,7 +534,7 @@ module.exports = {
          *
          * Advanced Settings:
          * -----------------
-         * - max_tokens: Maximum response length (default: 1000 tokens)
+         * - max_tokens: Maximum response length (default: 1024 tokens)
          * - temperature: Creativity control (0=strict, 1=creative) (default: 0)
          *
          * Usage Example:
@@ -510,6 +543,7 @@ module.exports = {
          *    - gpt-3.5-turbo (recommended)
          *    - gpt-4
          *    - gpt-4-turbo
+         *    - ...
          *
          * 2. Temperature Guide:
          *    - 0.0: Factual responses
@@ -521,8 +555,55 @@ module.exports = {
             basePath: process.env.CHATGPT_BASE_PATH || 'https://api.openai.com/v1/',
             apiKey: process.env.CHATGPT_API_KEY || '',
             model: process.env.CHATGPT_MODEL || 'gpt-3.5-turbo',
-            max_tokens: parseInt(process.env.CHATGPT_MAX_TOKENS) || 1000,
-            temperature: parseInt(process.env.CHATGPT_TEMPERATURE) || 0,
+            max_tokens: parseInt(process.env.CHATGPT_MAX_TOKENS) || 1024,
+            temperature: parseInt(process.env.CHATGPT_TEMPERATURE) || 0.7,
+        },
+
+        /**
+         * DeepDeek Integration Configuration
+         * ================================
+         * DeepDeek API integration for AI-powered chat functionality
+         *
+         * Setup Instructions:
+         * ------------------
+         * 1. Go to https://deepseek.com/
+         * 2. Create your DeepDeek account
+         * 3. Generate your API key at https://deepseek.com/account/api-keys
+         *
+         * Core Settings:
+         * -------------
+         * - enabled    : Enable/disable DeepDeek integration [true/false] (default: false)
+         * - basePath   : DeepDeek API endpoint (default: 'https://api.deepseek.com/v1/')
+         * - apiKey     : DeepDeek API secret key (ALWAYS store in .env)
+         * - model      : DeepDeek model version (default: 'deepdeek-chat')
+         *
+         * Advanced Settings:
+         * -----------------
+         * - max_tokens: Maximum response length (default: 1024 tokens)
+         * - temperature: Creativity control (0=strict, 1=creative) (default: 0)
+         *
+         * Usage Example:
+         * -------------
+         * 1. Supported Models:
+         *  - deepseek-chat (recommended)
+         *  - deepseek-coder
+         *  - deepseek-math
+         *  - deepseek-llm
+         *  - ...
+         *
+         * 2. Temperature Guide:
+         *  - 0.0: Factual responses
+         *  - 0.7: Balanced
+         *  - 1.0: Maximum creativity
+         *
+         */
+        deepSeek: {
+            enabled: process.env.DEEP_SEEK_ENABLED === 'true',
+            basePath: process.env.DEEP_SEEK_BASE_PATH || 'https://api.deepseek.com/v1/',
+            apiKey: process.env.DEEP_SEEK_API_KEY || '',
+            model: process.env.DEEP_SEEK_MODEL || 'deepseek-chat',
+            max_tokens: parseInt(process.env.DEEP_SEEK_MAX_TOKENS) || 1024,
+            temperature: parseInt(process.env.DEEP_SEEK_TEMPERATURE) || 0.7,
         },
 
         /**
@@ -548,7 +629,7 @@ module.exports = {
          *                (default: Streaming avatar instructions for MiroTalk SFU)
          */
         videoAI: {
-            enabled: process.env.VIDEOAI_ENABLED !== 'false',
+            enabled: process.env.VIDEOAI_ENABLED === 'true',
             basePath: 'https://api.heygen.com',
             apiKey: process.env.VIDEOAI_API_KEY || '',
             systemLimit: process.env.VIDEOAI_SYSTEM_LIMIT || 'You are a streaming avatar from MiroTalk SFU...',
@@ -807,6 +888,57 @@ module.exports = {
                 return `https://get.geojs.io/v1/ip/geo/${ip}.json`;
             },
         },
+
+        /**
+         * AWS S3 Storage Configuration
+         * ===========================
+         * Enables cloud file storage using Amazon Simple Storage Service (S3).
+         *
+         * Core Settings:
+         * --------------
+         * - enabled: Enable/disable AWS S3 integration [true/false]
+         *
+         * Service Setup:
+         * -------------
+         * 1. Create an S3 Bucket:
+         *    - Sign in to AWS Management Console
+         *    - Navigate to S3 service
+         *    - Click "Create bucket"
+         *    - Choose unique name (e.g., 'mirotalk')
+         *    - Select region (must match AWS_REGION in config)
+         *    - Enable desired settings (versioning, logging, etc.)
+         *
+         * 2. Get Security Credentials:
+         *    - Create IAM user with programmatic access
+         *    - Attach 'AmazonS3FullAccess' policy (or custom minimal policy)
+         *    - Save Access Key ID and Secret Access Key
+         *
+         * 3. Configure CORS (for direct uploads):
+         *    [
+         *      {
+         *        "AllowedHeaders": ["*"],
+         *        "AllowedMethods": ["PUT", "POST"],
+         *        "AllowedOrigins": ["*"],
+         *        "ExposeHeaders": []
+         *      }
+         *    ]
+         *
+         * Technical Details:
+         * -----------------
+         * - Default region: us-east-2 (Ohio)
+         * - Direct upload uses presigned URLs (expire after 1 hour by default)
+         * - Recommended permissions for direct upload:
+         *   - s3:PutObject
+         *   - s3:GetObject
+         *   - s3:DeleteObject
+         */
+        aws: {
+            enabled: process.env.AWS_S3_ENABLED === 'true',
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'your-access-key-id',
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'your-secret-access-key',
+            region: process.env.AWS_REGION || 'us-east-2',
+            bucket: process.env.AWS_S3_BUCKET || 'mirotalk',
+        },
     },
 
     // ==============================================
@@ -835,7 +967,7 @@ module.exports = {
                 name: process.env.APP_NAME || 'MiroTalk SFU',
                 title:
                     process.env.APP_TITLE ||
-                    'MiroTalk SFU<br />Free browser based Real-time video calls.<br />Simple, Secure, Fast.',
+                    '<h1>MiroTalk SFU</h1> Free browser based Real-time video calls.<br />Simple, Secure, Fast.',
                 description:
                     process.env.APP_DESCRIPTION ||
                     'Start your next video call with a single click. No download, plug-in, or login is required.',
@@ -1036,6 +1168,7 @@ module.exports = {
                 chatMarkdownButton: process.env.SHOW_CHAT_MARKDOWN !== 'false',
                 chatSpeechStartButton: process.env.SHOW_CHAT_SPEECH !== 'false',
                 chatGPT: process.env.ENABLE_CHAT_GPT !== 'false',
+                deepSeek: process.env.ENABLE_DEEP_SEEK !== 'false',
             },
 
             // Poll interface controls
@@ -1394,6 +1527,8 @@ module.exports = {
                     },
                 },
             ],
+
+            iceConsentTimeout: 35, // Timeout for ICE consent (seconds)
 
             /**
              * Bandwidth Control Settings

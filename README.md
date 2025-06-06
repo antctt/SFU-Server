@@ -12,12 +12,12 @@
 
 </div>
 
-<p align="center">Free WebRTC - SFU - Simple, Secure, Scalable Real-Time Video Conferences with support for up to 8k resolution and 60fps. It's compatible with all major browsers and platforms</p>
+<p align="center"><strong>MiroTalk SFU</strong> stands for <strong>Selective Forwarding Unit</strong>, built on <a href="https://mediasoup.org" target="_blank">Mediasoup</a>, a powerful media server that routes video/audio streams between participants. It offers a rich set of features for WebRTC meetings, webinars, and more. Simple, Secure, Scalable Real-Time Video Conferences with support for up to 8K resolution and 60fps. It's compatible with all major browsers and platforms.</p>
 
 <hr />
 
 <p align="center">
-    <a href="https://sfu.mirotalk.com/">Explore MiroTalk SFU</a>
+    <strong><a href="https://sfu.mirotalk.com/">Explore MiroTalk SFU</a></strong>
 </p>
 
 <hr />
@@ -32,7 +32,7 @@
 
 <strong>
     <p align="center">
-        Join our Community for questions, help, support, ideas, and discussions on <a href='https://discord.gg/rgGYfeYW3N'>Discord</a>
+        Join our Community for questions, help, support, ideas, and discussions on <strong><a href='https://discord.gg/rgGYfeYW3N'>Discord</a></strong>
     </p>
 </strong>
 
@@ -66,7 +66,7 @@
 - Choose your audio input, output, and video source.
 - Supports video quality up to 4K.
 - Supports advance Video/Document Picture-in-Picture (PiP) offering a more streamlined and flexible viewing experience.
-- Record your screen, audio, and video locally or on your Server.
+- Record your screen, audio, and video locally, on your server, or in an S3 bucket for easy access and management!
 - Snapshot video frames and save them as PNG images.
 - Chat with an Emoji Picker for expressing feelings, private messages, Markdown support, and conversation saving.
 - ChatGPT (powered by OpenAI) for answering questions, providing information, and connecting users to relevant resources.

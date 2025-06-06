@@ -42,7 +42,7 @@ let BUTTONS = {
         broadcastingButton: true, // presenter
         lobbyButton: true, // presenter
         sendEmailInvitation: true, // presenter
-        micOptionsButton: true, // presenter
+        micOptionsButton: true,
         tabRTMPStreamingBtn: true, // presenter
         tabModerator: true, // presenter
         tabRecording: true,
@@ -94,6 +94,7 @@ let BUTTONS = {
         chatMarkdownButton: true,
         chatSpeechStartButton: true,
         chatGPT: true,
+        deepSeek: true,
     },
     poll: {
         pollPinButton: true,
@@ -122,14 +123,12 @@ function handleRules(isPresenter) {
         // ##################################
         // GUEST
         // ##################################
-        //BUTTONS.main.shareButton = false;
         BUTTONS.participantsList.saveInfoButton = false;
         BUTTONS.settings.lockRoomButton = false;
         BUTTONS.settings.unlockRoomButton = false;
         BUTTONS.settings.broadcastingButton = false;
         BUTTONS.settings.lobbyButton = false;
         BUTTONS.settings.sendEmailInvitation = false;
-        BUTTONS.settings.micOptionsButton = false;
         BUTTONS.settings.tabRTMPStreamingBtn = false;
         BUTTONS.settings.tabModerator = false;
         BUTTONS.videoOff.muteAudioButton = false;
@@ -139,8 +138,6 @@ function handleRules(isPresenter) {
         BUTTONS.consumerVideo.geolocationButton = false;
         BUTTONS.consumerVideo.banButton = false;
         BUTTONS.consumerVideo.ejectButton = false;
-        //BUTTONS.consumerVideo.muteAudioButton = false;
-        //BUTTONS.consumerVideo.muteVideoButton = false;
         BUTTONS.whiteboard.whiteboardLockButton = false;
 
         //...
@@ -184,6 +181,7 @@ function handleRules(isPresenter) {
         switchEveryoneCantShareScreen.checked = localStorageSettings.moderator_screen_cant_share;
         switchEveryoneCantChatPrivately.checked = localStorageSettings.moderator_chat_cant_privately;
         switchEveryoneCantChatChatGPT.checked = localStorageSettings.moderator_chat_cant_chatgpt;
+        switchEveryoneCantChatDeepSeek.checked = localStorageSettings.moderator_chat_cant_deep_seek;
         switchEveryoneCantMediaSharing.checked = localStorageSettings.moderator_media_cant_sharing;
         switchDisconnectAllOnLeave.checked = localStorageSettings.moderator_disconnect_all_on_leave;
 
@@ -197,6 +195,7 @@ function handleRules(isPresenter) {
             screen_cant_share: switchEveryoneCantShareScreen.checked,
             chat_cant_privately: switchEveryoneCantChatPrivately.checked,
             chat_cant_chatgpt: switchEveryoneCantChatChatGPT.checked,
+            chat_cant_deep_seek: switchEveryoneCantChatDeepSeek.checked,
             media_cant_sharing: switchEveryoneCantMediaSharing.checked,
         };
         console.log('Rules moderator data ---->', moderatorData);

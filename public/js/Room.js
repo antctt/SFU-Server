@@ -11,7 +11,7 @@ if (location.href.substr(0, 5) !== 'https') location.href = 'https' + location.h
  * @license For commercial or closed source, contact us at license.mirotalk@gmail.com or purchase directly via CodeCanyon
  * @license CodeCanyon: https://codecanyon.net/item/mirotalk-sfu-webrtc-realtime-video-conferences/40769970
  * @author  Miroslav Pejic - miroslav.pejic.85@gmail.com
- * @version 1.8.17
+ * @version 1.8.60
  *
  */
 
@@ -250,6 +250,7 @@ let isVideoControlsOn = false;
 let isChatPasteTxt = false;
 let isChatMarkdownOn = false;
 let isChatGPTOn = false;
+let isDeepSeekOn = false;
 let isSpeechSynthesisSupported = 'speechSynthesis' in window;
 let joinRoomWithoutAudioVideo = true;
 let joinRoomWithScreen = false;
@@ -315,26 +316,26 @@ function initClient() {
         setTippy(
             'switchPushToTalk',
             'If Active, When SpaceBar keydown the microphone will be resumed, on keyup will be paused, like a walkie-talkie.',
-            'right',
+            'right'
         );
         setTippy('lobbyAcceptAllBtn', 'Accept', 'top');
         setTippy('lobbyRejectAllBtn', 'Reject', 'top');
         setTippy(
             'switchBroadcasting',
             'Broadcasting is the dissemination of audio or video content to a large audience (one to many)',
-            'right',
+            'right'
         );
         setTippy(
             'switchLobby',
             'Lobby mode lets you protect your meeting by only allowing people to enter after a formal approval by a moderator',
-            'right',
+            'right'
         );
         setTippy('initVideoAudioRefreshButton', 'Refresh audio/video devices', 'top');
         setTippy(
             'screenOptimizationLabel',
             'Detail: For high fidelity (screen sharing with text/graphics)<br />Motion: For high frame rate (video playback, game streaming',
             'right',
-            true,
+            true
         );
         setTippy('switchPitchBar', 'Toggle audio pitch bar', 'right');
         setTippy('switchSounds', 'Toggle the sounds notifications', 'right');
@@ -346,12 +347,12 @@ function initClient() {
         setTippy(
             'switchHostOnlyRecording',
             'Only the host (presenter) has the capability to record the meeting',
-            'right',
+            'right'
         );
         setTippy(
             'switchH264Recording',
             'Prioritize h.264 with AAC or h.264 with Opus codecs over VP8 with Opus or VP9 with Opus codecs',
-            'right',
+            'right'
         );
         setTippy('refreshVideoFiles', 'Refresh', 'left');
         setTippy('switchServerRecording', 'The recording will be stored on the server rather than locally', 'right');
@@ -602,7 +603,7 @@ async function enumerateVideoDevices(stream) {
                 }
                 if (!el) return;
                 await addChild(device, [el, eli]);
-            }),
+            })
         )
         .then(async () => {
             await stopTracks(stream);
@@ -650,7 +651,7 @@ async function enumerateAudioDevices(stream) {
                 }
                 if (!el) return;
                 await addChild(device, [el, eli]);
-            }),
+            })
         )
         .then(async () => {
             await stopTracks(stream);
@@ -1150,7 +1151,7 @@ async function whoAreYou() {
         title: BRAND.app?.name,
         input: 'text',
         inputPlaceholder: 'Enter your email or name',
-        inputAttributes: { maxlength: 32, id: 'usernameInput' },
+        inputAttributes: { maxlength: 254, id: 'usernameInput' },
         inputValue: default_name,
         html: initUser, // Inject HTML
         confirmButtonText: `Join meeting`,
@@ -1162,7 +1163,10 @@ async function whoAreYou() {
         },
         inputValidator: (name) => {
             if (!name) return 'Please enter your email or name';
-            if (name.length > 30) return 'Name must be max 30 char';
+            const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(name);
+            if ((isEmail && name.length > 254) || (!isEmail && name.length > 32)) {
+                return isEmail ? 'Email must be max 254 char' : 'Name must be max 32 char';
+            }
             name = filterXSS(name);
             if (isHtml(name)) return 'Invalid name!';
             if (!getCookie(room_id + '_name')) {
@@ -1475,7 +1479,7 @@ function joinRoom(peer_name, room_id) {
             joinRoomWithScreen,
             isSpeechSynthesisSupported,
             transcription,
-            roomIsReady,
+            roomIsReady
         );
         handleRoomClientEvents();
         //notify ? shareRoom() : sound('joined');
@@ -1483,6 +1487,8 @@ function joinRoom(peer_name, room_id) {
 }
 
 function roomIsReady() {
+    startRoomSession();
+
     makeRoomPopupQR();
 
     if (peer_avatar && isImageURL(peer_avatar)) {
@@ -1515,7 +1521,7 @@ function roomIsReady() {
 
     !BUTTONS.poll.pollSaveButton && hide(pollSaveButton);
 
-    isWebkitSpeechRecognitionSupported && BUTTONS.chat.chatSpeechStartButton
+    speechRecognition && BUTTONS.chat.chatSpeechStartButton
         ? show(chatSpeechStartButton)
         : (BUTTONS.chat.chatSpeechStartButton = false);
 
@@ -1612,9 +1618,7 @@ function roomIsReady() {
     handleEditor();
     loadSettingsFromLocalStorage();
     startSessionTimer();
-    document.body.addEventListener('mousemove', (e) => {
-        showButtons();
-    });
+    handleButtonsBar();
     checkButtonsBar();
     if (room_password) {
         lockRoomButton.click();
@@ -2358,7 +2362,7 @@ async function changeCamera(deviceId) {
             initStream = camStream;
             console.log(
                 '04.5 ----> Success attached init cam video stream',
-                initStream.getVideoTracks()[0].getSettings(),
+                initStream.getVideoTracks()[0].getSettings()
             );
             checkInitConfig();
             camera = detectCameraFacingMode(camStream);
@@ -2441,7 +2445,7 @@ function handleMediaError(mediaType, err, redirectURL = false) {
     popupHtmlMessage(null, image.forbidden, 'Access denied', html, 'center', redirectURL);
 
     throw new Error(
-        `Access denied for ${mediaType} device [${err.name}]: ${errMessage} check the common getUserMedia errors: https://blog.addpipe.com/common-getusermedia-errors/`,
+        `Access denied for ${mediaType} device [${err.name}]: ${errMessage} check the common getUserMedia errors: https://blog.addpipe.com/common-getusermedia-errors/`
     );
 }
 
@@ -2853,6 +2857,14 @@ function handleSelects() {
         lS.setSettings(localStorageSettings);
         e.target.blur();
     };
+    switchEveryoneCantChatDeepSeek.onchange = (e) => {
+        const chatCantDeepSeek = e.currentTarget.checked;
+        rc.updateRoomModerator({ type: 'chat_cant_deep_seek', status: chatCantDeepSeek });
+        rc.roomMessage('chat_cant_deep_seek', chatCantDeepSeek);
+        localStorageSettings.moderator_chat_cant_deep_seek = chatCantDeepSeek;
+        lS.setSettings(localStorageSettings);
+        e.target.blur();
+    };
     switchEveryoneCantMediaSharing.onchange = (e) => {
         const mediaCantSharing = e.currentTarget.checked;
         rc.updateRoomModerator({ type: 'media_cant_sharing', status: mediaCantSharing });
@@ -3005,7 +3017,7 @@ function handleKeyboardShortcuts() {
                         userLog(
                             'warning',
                             'The presenter has disabled your ability to open the document PIP',
-                            'top-end',
+                            'top-end'
                         );
                         break;
                     }
@@ -3105,7 +3117,7 @@ function handleInputs() {
             Object.keys(chatInputEmoji)
                 .map((key) => key.replace(/([()[{*+.$^\\|?])/g, '\\$1'))
                 .join('|'),
-            'gim',
+            'gim'
         );
         // Replace matching patterns with corresponding emojis
         this.value = this.value.replace(regexPattern, (match) => chatInputEmoji[match]);
@@ -3532,6 +3544,9 @@ function handleRoomClientEvents() {
     });
     rc.on(RoomClient.EVENTS.exitRoom, () => {
         console.log('Room event: Client leave room');
+
+        endRoomSession();
+
         if (rc.isRecording() || recordingStatus.innerText != '0s') {
             rc.saveRecording('Room event: Client save recording before to exit');
         }
@@ -3633,13 +3648,20 @@ function getDataTimeStringFormat() {
 
 function getUUID() {
     const uuid4 = ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
-        (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16),
+        (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
     );
     if (window.localStorage.uuid) {
         return window.localStorage.uuid;
     }
     window.localStorage.uuid = uuid4;
     return uuid4;
+}
+
+function handleButtonsBar() {
+    const showButtonsHandler = () => showButtons();
+    isDesktopDevice
+        ? document.body.addEventListener('mousemove', showButtonsHandler)
+        : document.body.addEventListener('touchstart', showButtonsHandler);
 }
 
 function showButtons() {
@@ -3753,7 +3775,7 @@ function isMobile(userAgent) {
 
 function isTablet(userAgent) {
     return /(ipad|tablet|(android(?!.*mobile))|(windows(?!.*phone)(.*touch))|kindle|playbook|silk|(puffin(?!.*(IP|AP|WP))))/.test(
-        userAgent,
+        userAgent
     );
 }
 
@@ -4154,7 +4176,7 @@ async function loadPDF(pdfData, pages) {
                     await page.render(renderContext).promise;
                     return canvas;
                 });
-            }),
+            })
         );
         return canvases.filter((canvas) => canvas !== null);
     } catch (error) {
@@ -4172,7 +4194,7 @@ async function pdfToImage(pdfData, canvas) {
                 new fabric.Image(await c, {
                     scaleX: scale,
                     scaleY: scale,
-                }),
+                })
             );
         });
     } catch (error) {
@@ -4349,7 +4371,7 @@ function whiteboardAction(data, emit = true) {
         userLog(
             'info',
             `${data.peer_name} <i class="fas fa-chalkboard-teacher"></i> whiteboard action: ${data.action}`,
-            'top-end',
+            'top-end'
         );
     }
 
@@ -4460,6 +4482,31 @@ function getParticipantsList(peers) {
             />
             <div class="about">
                 <div class="name">ChatGPT</div>
+                <div class="status"><i class="fa fa-circle online"></i> online</div>
+            </div>
+        </li>`;
+    }
+
+    const deepSeek = BUTTONS.chat.deepSeek !== undefined ? BUTTONS.chat.deepSeek : true;
+
+    // DEEP-SEEK
+    if (deepSeek) {
+        const deepSeek_active = rc.chatPeerName === 'DeepSeek' ? ' active' : '';
+
+        li += `
+        <li 
+            id="DeepSeek" 
+            data-to-id="DeepSeek"
+            data-to-name="DeepSeek"
+            class="clearfix${deepSeek_active}" 
+            onclick="rc.showPeerAboutAndMessages(this.id, 'DeepSeek', '', event)"
+        >
+            <img 
+                src="${image.deepSeek}"
+                alt="avatar"
+            />
+            <div class="about">
+                <div class="name">DeepSeek</div>
                 <div class="status"><i class="fa fa-circle online"></i> online</div>
             </div>
         </li>`;
@@ -5041,7 +5088,7 @@ function showImageSelector() {
 
     // Create clean virtual bg Image
     createImage('initCleanVbImg', image.user, 'Remove virtual background', 'cleanVb', () =>
-        handleVirtualBackground(null, null),
+        handleVirtualBackground(null, null)
     );
     // Create High Blur Image
     createImage('initHighBlurImg', image.blurHigh, 'High Blur', 'high', () => handleVirtualBackground(20));
@@ -5050,7 +5097,7 @@ function showImageSelector() {
 
     // Create transparent virtual bg Image
     createImage('initTransparentBg', image.transparentBg, 'Transparent Virtual background', 'transparentVb', () =>
-        handleVirtualBackground(null, null, true),
+        handleVirtualBackground(null, null, true)
     );
 
     // Handle file upload (common logic for file selection)
@@ -5206,7 +5253,7 @@ async function applyVirtualBackground(videoElement, stream, blurLevel, backgroun
     } else if (backgroundImage) {
         videoElement.srcObject = await virtualBackground.applyVirtualBackgroundToWebRTCStream(
             videoTrack,
-            backgroundImage,
+            backgroundImage
         );
         virtualBackgroundSelectedImage = backgroundImage;
         virtualBackgroundBlurLevel = null;
@@ -5340,6 +5387,61 @@ function showError(errorElement, message, delay = 5000) {
 }
 
 // ####################################################
+// HANDLE SESSION EXIT
+// ####################################################
+
+let preventExit = false;
+
+// Call this when the session starts (e.g., after joining a room)
+function startRoomSession() {
+    preventExit = true;
+    // Push a new state so the back button can be intercepted
+    history.pushState({ sessionActive: true }, '', location.href);
+}
+
+// Call this when the session ends (e.g., after leaving a room)
+function endRoomSession() {
+    preventExit = false;
+}
+
+// Intercept browser BACK button
+window.addEventListener('popstate', (event) => {
+    if (!preventExit) return;
+    // Show a custom confirmation dialog
+    Swal.fire({
+        background: swalBackground,
+        position: 'top',
+        title: 'Leave session?',
+        text: 'Are you sure you want to exit this session?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Yes',
+        cancelButtonText: 'No',
+        confirmButtonColor: '#3085d6',
+        cancelButtonColor: '#d33',
+        showClass: { popup: 'animate__animated animate__fadeInDown' },
+        hideClass: { popup: 'animate__animated animate__fadeOutUp' },
+    }).then((result) => {
+        if (result.isConfirmed) {
+            preventExit = false;
+            // Actually go back in history
+            history.back();
+        } else {
+            // Stay in session: push state again to prevent exit
+            history.pushState({ sessionActive: true }, '', location.href);
+        }
+    });
+});
+
+// Intercept tab close, refresh, or direct URL navigation
+window.addEventListener('beforeunload', (e) => {
+    if (!preventExit) return;
+    // Modern browsers ignore custom messages, but this triggers the prompt
+    e.preventDefault();
+    e.returnValue = '';
+});
+
+// ####################################################
 // ABOUT
 // ####################################################
 
@@ -5351,7 +5453,7 @@ function showAbout() {
         position: 'center',
         imageUrl: BRAND.about?.imageUrl && BRAND.about.imageUrl.trim() !== '' ? BRAND.about.imageUrl : image.about,
         customClass: { image: 'img-about' },
-        title: BRAND.about?.title && BRAND.about.title.trim() !== '' ? BRAND.about.title : 'WebRTC SFU v1.8.17',
+        title: BRAND.about?.title && BRAND.about.title.trim() !== '' ? BRAND.about.title : 'WebRTC SFU v1.8.60',
         html: `
             <br />
             <div id="about">

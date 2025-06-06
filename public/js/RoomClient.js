@@ -9,7 +9,7 @@
  * @license For commercial or closed source, contact us at license.mirotalk@gmail.com or purchase directly via CodeCanyon
  * @license CodeCanyon: https://codecanyon.net/item/mirotalk-sfu-webrtc-realtime-video-conferences/40769970
  * @author  Miroslav Pejic - miroslav.pejic.85@gmail.com
- * @version 1.8.17
+ * @version 1.8.60
  *
  */
 
@@ -104,6 +104,7 @@ const image = {
     lobby: '../images/lobby.png',
     email: '../images/email.png',
     chatgpt: '../images/chatgpt.png',
+    deepSeek: '../images/deepSeek.png',
     all: '../images/all.png',
     forbidden: '../images/forbidden.png',
     broadcasting: '../images/broadcasting.png',
@@ -222,7 +223,7 @@ class RoomClient {
         joinRoomWithScreen,
         isSpeechSynthesisSupported,
         transcription,
-        successCallback,
+        successCallback
     ) {
         this.localAudioEl = localAudioEl;
         this.remoteAudioEl = remoteAudioEl;
@@ -267,6 +268,7 @@ class RoomClient {
             screen_cant_share: false,
             chat_cant_privately: false,
             chat_cant_chatgpt: false,
+            chat_cant_deep_seek: false,
             media_cant_sharing: false,
         };
 
@@ -330,6 +332,7 @@ class RoomClient {
 
         this.pollSelectedOptions = {};
         this.chatGPTContext = [];
+        this.deepSeekContext = [];
         this.chatMessages = [];
         this.leftMsgAvatar = null;
         this.rightMsgAvatar = null;
@@ -373,12 +376,14 @@ class RoomClient {
         this.recScreenStream = null;
         this.recording = {
             recSyncServerRecording: false,
+            recSyncServerToS3: false,
             recSyncServerEndpoint: '',
         };
         this.recSyncTime = 4000; // 4 sec
         this.recSyncChunkSize = 1000000; // 1MB
 
         // Encodings
+        this.preferLocalCodecsOrder = false; // Prefer local codecs order
         this.forceVP8 = false; // Force VP8 codec for webcam and screen sharing
         this.forceVP9 = false; // Force VP9 codec for webcam and screen sharing
         this.forceH264 = false; // Force H264 codec for webcam and screen sharing
@@ -470,14 +475,14 @@ class RoomClient {
 
                 if (room === 'notAllowed') {
                     console.warn(
-                        '00-WARNING ----> Room is Unauthorized for current user, please provide a valid room name for this user',
+                        '00-WARNING ----> Room is Unauthorized for current user, please provide a valid room name for this user'
                     );
                     return this.userRoomNotAllowed();
                 }
 
                 if (room === 'unauthorized') {
                     console.warn(
-                        '00-WARNING ----> Room is Unauthorized for current user, please provide a valid username and password',
+                        '00-WARNING ----> Room is Unauthorized for current user, please provide a valid username and password'
                     );
                     return this.userUnauthorized();
                 }
@@ -554,7 +559,7 @@ class RoomClient {
         // Get Router Capabilities
         const routerRtpCapabilities = await this.socket.request('getRouterRtpCapabilities');
         routerRtpCapabilities.headerExtensions = routerRtpCapabilities.headerExtensions.filter(
-            (ext) => ext.uri !== 'urn:3gpp:video-orientation',
+            (ext) => ext.uri !== 'urn:3gpp:video-orientation'
         );
 
         // Load device
@@ -667,7 +672,7 @@ class RoomClient {
             }
             // Host protected enabled in the server side
             if (room.hostProtected) {
-                RoomURL = window.location.origin + '/join/?room=' + room_id;
+                RoomURL = window.location.origin + '/join/' + room_id;
             }
 
             // Share Media Data on Join
@@ -720,21 +725,42 @@ class RoomClient {
     }
 
     async loadDevice(routerRtpCapabilities) {
+        if (!routerRtpCapabilities) {
+            console.error('Router RTP Capabilities are required to load the device.');
+            this.userLog('error', 'Router RTP Capabilities are missing.', 'center', 6000);
+            return null;
+        }
+
         let device;
         try {
-            device = new this.mediasoupClient.Device();
+            device = await this.mediasoupClient.Device.factory();
+            console.log('Device created successfully:', device);
         } catch (error) {
             if (error.name === 'UnsupportedError') {
-                console.error('Browser not supported');
-                this.userLog('error', 'Browser not supported', 'center', 6000);
+                console.error('Browser not supported:', error);
+                this.userLog('error', 'Browser not supported. Please try a different browser.', 'center', 6000);
             } else {
-                console.error('Browser not supported: ', error);
-                this.userLog('error', 'Browser not supported: ' + error, 'center', 6000);
+                console.error('Error creating device:', error);
+                this.userLog('error', `Failed to create device: ${error.message}`, 'center', 6000);
             }
+            return null;
         }
-        await device.load({
-            routerRtpCapabilities,
-        });
+
+        try {
+            await device.load({
+                routerRtpCapabilities,
+                preferLocalCodecsOrder: !!this.preferLocalCodecsOrder,
+            });
+            console.log(
+                `Device loaded successfully with router RTP capabilities (preferLocalCodecsOrder: ${!!this.preferLocalCodecsOrder})`,
+                device.rtpCapabilities
+            );
+        } catch (error) {
+            console.error('Error loading device with router RTP capabilities:', error);
+            this.userLog('error', `Failed to load device: ${error.message}`, 'center', 6000);
+            return null;
+        }
+
         return device;
     }
 
@@ -989,7 +1015,7 @@ class RoomClient {
             'Unable to reconnect. Please check your network.',
             'center',
             false,
-            true,
+            true
         );
 
         return false;
@@ -1278,12 +1304,14 @@ class RoomClient {
     }
 
     handleDisconnect(reason) {
+        endRoomSession();
+
         window.localStorage.isReconnected = true;
 
         console.log('Disconnected. Attempting to reconnect...');
         this.exit(true);
 
-        let reconnectAlert;
+        let reconnectAlert = null;
 
         // Helper functions
         const showReconnectAlert = () => {
@@ -1350,10 +1378,12 @@ class RoomClient {
         this.socket.on('connect_error', () => {
             if (this.reconnectAttempts < this.maxReconnectAttempts) {
                 this.reconnectAttempts++;
-                reconnectAlert.update({
-                    title: 'Reconnect',
-                    text: `Attempting to reconnect ${this.reconnectAttempts}...`,
-                });
+                if (reconnectAlert) {
+                    reconnectAlert.update({
+                        title: 'Reconnect',
+                        text: `Attempting to reconnect ${this.reconnectAttempts}...`,
+                    });
+                }
             } else {
                 if (!serverAwayShown) {
                     showServerAwayMessage();
@@ -1370,10 +1400,12 @@ class RoomClient {
 
                 const delay = Math.min(this.reconnectInterval * this.reconnectAttempts, this.maxReconnectInterval);
 
-                reconnectAlert.update({
-                    title: 'Reconnect',
-                    text: `Attempting to reconnect in ${delay / 1000}s...`,
-                });
+                if (reconnectAlert) {
+                    reconnectAlert.update({
+                        title: 'Reconnect',
+                        text: `Attempting to reconnect in ${delay / 1000}s...`,
+                    });
+                }
 
                 reconnectTimer = setTimeout(() => {
                     this.socket.connect();
@@ -1381,7 +1413,9 @@ class RoomClient {
                 }, delay);
             } else {
                 console.log('Reconnection limit reached!');
-                reconnectAlert.close();
+                if (reconnectAlert) {
+                    reconnectAlert.close();
+                }
                 showMaxAttemptsAlert();
             }
         };
@@ -1390,6 +1424,7 @@ class RoomClient {
         this.socket.once('connect', () => {
             console.log('Reconnected!');
             this.reconnectAttempts = 0;
+            startRoomSession();
             clearTimers();
         });
 
@@ -1441,7 +1476,7 @@ class RoomClient {
             video: peer_video,
             screen: peer_screen,
             notify: 0,
-            isPresenter: isPresenter,
+            isPresenter: isPresenter || false,
         };
         if (peer_token) queryParams.token = peer_token;
         const url = `${baseUrl}?${Object.entries(queryParams)
@@ -1640,13 +1675,13 @@ class RoomClient {
                         // Apply blur before sending it to WebRTC stream
                         stream = await virtualBackground.applyBlurToWebRTCStream(
                             videoTrack,
-                            virtualBackgroundBlurLevel,
+                            virtualBackgroundBlurLevel
                         );
                     } else if (virtualBackgroundSelectedImage) {
                         // Apply virtual background to WebRTC stream
                         stream = await virtualBackground.applyVirtualBackgroundToWebRTCStream(
                             videoTrack,
-                            virtualBackgroundSelectedImage,
+                            virtualBackgroundSelectedImage
                         );
                     } else if (virtualBackgroundTransparent) {
                         // Apply Transparent virtual background to WebRTC stream
@@ -1820,7 +1855,7 @@ class RoomClient {
                 this.userLog(
                     'error',
                     `Your device doesn't support the selected video quality (${videoQuality.value}), please select the another one.`,
-                    'top-end',
+                    'top-end'
                 );
             }
         }
@@ -1861,7 +1896,7 @@ class RoomClient {
 
         // Create clean virtual bg Image
         createImage('cleanVbImg', image.user, 'Remove virtual background', 'cleanVb', () =>
-            handleVirtualBackground(null, null),
+            handleVirtualBackground(null, null)
         );
         // Create High Blur Image
         createImage('highBlurImg', image.blurHigh, 'High Blur', 'high', () => handleVirtualBackground(20));
@@ -1870,7 +1905,7 @@ class RoomClient {
 
         // Create transparent virtual bg Image
         createImage('transparentBg', image.transparentBg, 'Transparent Virtual background', 'transparentVb', () =>
-            handleVirtualBackground(null, null, true),
+            handleVirtualBackground(null, null, true)
         );
 
         // Handle file upload (common logic for file selection)
@@ -2043,32 +2078,20 @@ class RoomClient {
     // ####################################################
 
     getAudioConstraints(deviceId) {
-        let constraints = {
+        return {
             audio: {
-                autoGainControl: true,
-                echoCancellation: true,
-                noiseSuppression: true,
+                autoGainControl: switchAutoGainControl.checked,
+                echoCancellation: switchNoiseSuppression.checked,
+                noiseSuppression: switchEchoCancellation.checked,
+                sampleRate: parseInt(sampleRateSelect.value),
+                sampleSize: parseInt(sampleSizeSelect.value),
+                channelCount: parseInt(channelCountSelect.value),
+                latency: parseInt(micLatencyRange.value),
+                volume: parseInt(micVolumeRange.value / 100),
                 deviceId: deviceId,
             },
             video: false,
         };
-        if (isRulesActive && isPresenter) {
-            constraints = {
-                audio: {
-                    autoGainControl: switchAutoGainControl.checked,
-                    echoCancellation: switchNoiseSuppression.checked,
-                    noiseSuppression: switchEchoCancellation.checked,
-                    sampleRate: parseInt(sampleRateSelect.value),
-                    sampleSize: parseInt(sampleSizeSelect.value),
-                    channelCount: parseInt(channelCountSelect.value),
-                    latency: parseInt(micLatencyRange.value),
-                    volume: parseInt(micVolumeRange.value / 100),
-                    deviceId: deviceId,
-                },
-                video: false,
-            };
-        }
-        return constraints;
     }
 
     getCameraConstraints() {
@@ -2434,7 +2457,7 @@ class RoomClient {
                 vp = this.createButton(this.peer_id + '__vp', html.videoPrivacy);
                 au = this.createButton(
                     this.peer_id + '__audio',
-                    this.peer_info.peer_audio ? html.audioOn : html.audioOff,
+                    this.peer_info.peer_audio ? html.audioOn : html.audioOff
                 );
                 au.style.cursor = 'default';
 
@@ -2500,7 +2523,7 @@ class RoomClient {
                 this.setAV(
                     this.audioConsumers.get(this.peer_id + '___pVolume'),
                     this.peer_id + '___pVolume',
-                    this.peer_info.peer_audio_volume,
+                    this.peer_info.peer_audio_volume
                 );
 
                 if (!isScreen) this.handleVP(elem.id, vp.id);
@@ -3042,7 +3065,7 @@ class RoomClient {
                     this.audioConsumers.get(remotePeerId + '___pVolume'),
                     remotePeerId + '___pVolume',
                     remotePeerAudioVolume,
-                    true,
+                    true
                 );
 
                 this.setPeerAudio(remotePeerId, remotePeerAudio);
@@ -3126,7 +3149,7 @@ class RoomClient {
             handleAspectRatio();
             console.log(
                 '[removeConsumer - ' + consumer_kind + '] Video-element-count',
-                this.videoMediaContainer.childElementCount,
+                this.videoMediaContainer.childElementCount
             );
         }
 
@@ -4766,7 +4789,7 @@ class RoomClient {
     }
 
     sendMessage() {
-        if (!this.thereAreParticipants() && !isChatGPTOn) {
+        if (!this.thereAreParticipants() && !isChatGPTOn && !isDeepSeekOn) {
             this.cleanMessage();
             isChatPasteTxt = false;
             return this.userLog('info', 'No participants in the room', 'top-end');
@@ -4777,7 +4800,7 @@ class RoomClient {
             return this.userLog(
                 'warning',
                 `The message seems too long, with a maximum of ${this.chatMessageLength} characters allowed`,
-                'top-end',
+                'top-end'
             );
         }
 
@@ -4801,7 +4824,7 @@ class RoomClient {
                 'warning',
                 `Kindly refrain from spamming. Please wait ${this.chatMessageNotifyDelay / 1000} seconds before sending another message`,
                 'top-end',
-                this.chatMessageNotifyDelay,
+                this.chatMessageNotifyDelay
             );
         }
         this.chatMessageTimeLast = currentTime;
@@ -4818,12 +4841,14 @@ class RoomClient {
             peer_name: this.peer_name,
             peer_avatar: this.peer_avatar,
             peer_id: this.peer_id,
-            to_peer_id: 'ChatGPT',
-            to_peer_name: 'ChatGPT',
+            to_peer_id: '',
+            to_peer_name: '',
             peer_msg: peer_msg,
         };
 
         if (isChatGPTOn) {
+            data.to_peer_id = 'ChatGPT';
+            data.to_peer_name = 'ChatGPT';
             console.log('Send message:', data);
             this.socket.emit('message', data);
             this.setMsgAvatar('left', this.peer_name, this.peer_avatar);
@@ -4834,7 +4859,7 @@ class RoomClient {
                 this.peer_id,
                 peer_msg,
                 data.to_peer_id,
-                data.to_peer_name,
+                data.to_peer_name
             );
             this.cleanMessage();
 
@@ -4862,7 +4887,60 @@ class RoomClient {
                 .catch((err) => {
                     console.log('ChatGPT error:', err);
                 });
-        } else {
+        }
+
+        if (isDeepSeekOn) {
+            data.to_peer_id = 'DeepSeek';
+            data.to_peer_name = 'DeepSeek';
+            console.log('Send message:', data);
+            this.socket.emit('message', data);
+            this.setMsgAvatar('left', this.peer_name, this.peer_avatar);
+            this.appendMessage(
+                'left',
+                this.leftMsgAvatar,
+                this.peer_name,
+                this.peer_id,
+                peer_msg,
+                data.to_peer_id,
+                data.to_peer_name
+            );
+            this.cleanMessage();
+
+            this.socket
+                .request('getDeepSeek', {
+                    time: getDataTimeString(),
+                    room: this.room_id,
+                    name: this.peer_name,
+                    prompt: peer_msg,
+                    context: this.deepSeekContext,
+                })
+                .then((completion) => {
+                    if (!completion) return;
+                    const { message, context } = completion;
+                    this.deepSeekContext = context ? context : [];
+                    console.log('Receive message:', message);
+                    this.setMsgAvatar('right', 'DeepSeek');
+                    this.appendMessage(
+                        'right',
+                        image.deepSeek,
+                        'DeepSeek',
+                        this.peer_id,
+                        message,
+                        'DeepSeek',
+                        'DeepSeek'
+                    );
+                    this.cleanMessage();
+                    this.streamingTask(message);
+                    this.speechInMessages && !VideoAI.active
+                        ? this.speechMessage(true, 'DeepSeek', message)
+                        : this.sound('message');
+                })
+                .catch((err) => {
+                    console.log('DeepSeek error:', err);
+                });
+        }
+
+        if (!isChatGPTOn && !isDeepSeekOn) {
             const participantsList = this.getId('participantsList');
             const participantsListItems = participantsList.getElementsByTagName('li');
             for (let i = 0; i < participantsListItems.length; i++) {
@@ -4880,7 +4958,7 @@ class RoomClient {
                         this.peer_id,
                         peer_msg,
                         data.to_peer_id,
-                        data.to_peer_name,
+                        data.to_peer_name
                     );
                     this.cleanMessage();
                 }
@@ -4931,15 +5009,18 @@ class RoomClient {
                     this.peer_id,
                     peer_msg,
                     to_peer_id,
-                    toPeerName,
+                    toPeerName
                 );
                 if (!this.isChatOpen) this.toggleChat();
             }
         });
     }
 
-    async showMessage(data) {
-        if (!this.isChatOpen && this.showChatOnMessage) await this.toggleChat();
+    async showMessage(data, toggleChat = true) {
+        if (toggleChat && !this.isChatOpen && this.showChatOnMessage) {
+            await this.toggleChat();
+        }
+
         this.setMsgAvatar('right', data.peer_name, data.peer_avatar);
         this.appendMessage(
             'right',
@@ -4948,8 +5029,9 @@ class RoomClient {
             data.peer_id,
             data.peer_msg,
             data.to_peer_id,
-            data.to_peer_name,
+            data.to_peer_name
         );
+
         if (!this.showChatOnMessage) {
             this.userLog('info', `💬 New message from: ${data.peer_name}`, 'top-end');
         }
@@ -4969,7 +5051,7 @@ class RoomClient {
             // INCOMING PRIVATE MESSAGE
             if (li.id === data.peer_id && data.to_peer_id != 'all') {
                 li.classList.add('pulsate');
-                if (!['all', 'ChatGPT'].includes(data.to_peer_id)) {
+                if (!['all', 'ChatGPT', 'DeepSeek'].includes(data.to_peer_id)) {
                     this.getId(`${data.peer_id}-unread-msg`).classList.remove('hidden');
                 }
             }
@@ -5058,6 +5140,9 @@ class RoomClient {
             case 'ChatGPT':
                 chatGPTMessages.insertAdjacentHTML('beforeend', newMessageHTML);
                 break;
+            case 'DeepSeek':
+                deepSeekMessages.insertAdjacentHTML('beforeend', newMessageHTML);
+                break;
             case 'all':
                 chatPublicMessages.insertAdjacentHTML('beforeend', newMessageHTML);
                 break;
@@ -5068,8 +5153,8 @@ class RoomClient {
 
         const message = getId(`message-${chatMessagesId}`);
         if (message) {
-            if (getFromName === 'ChatGPT') {
-                // Stream the message for ChatGPT
+            if (['ChatGPT', 'DeepSeek'].includes(getFromName)) {
+                // Stream the message for ChatGPT or DeepSeek
                 this.streamMessage(message, getMsg, 100);
             } else {
                 // Process the message for other senders
@@ -5223,13 +5308,14 @@ class RoomClient {
         }
     }
 
-    async isImageURL(input) {
-        if (!input) return false;
+    isImageURL(input) {
+        if (!input || typeof input !== 'string') return false;
         try {
-            const response = await fetch(input, { method: 'HEAD' });
-            const contentType = response.headers.get('content-type');
-            return contentType && contentType.startsWith('image/');
-        } catch {
+            const url = new URL(input);
+            return ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.svg'].some((ext) =>
+                url.pathname.toLowerCase().endsWith(ext)
+            );
+        } catch (e) {
             return false;
         }
     }
@@ -5281,7 +5367,7 @@ class RoomClient {
         iframe.setAttribute('frameborder', '0');
         iframe.setAttribute(
             'allow',
-            'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
+            'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
         );
         iframe.setAttribute('allowfullscreen', 'allowfullscreen');
         div.appendChild(iframe);
@@ -5361,10 +5447,12 @@ class RoomClient {
                 }
                 // Remove child nodes from different message containers
                 removeAllChildNodes(chatGPTMessages);
+                removeAllChildNodes(deepSeekMessages);
                 removeAllChildNodes(chatPublicMessages);
                 removeAllChildNodes(chatPrivateMessages);
                 this.chatMessages = [];
                 this.chatGPTContext = [];
+                this.deepSeekContext = [];
                 this.sound('delete');
             }
         });
@@ -6034,7 +6122,7 @@ class RoomClient {
                 audioStreams
                     .getTracks()
                     .filter((track) => track.kind === 'audio')
-                    .map((track) => new MediaStream([track])),
+                    .map((track) => new MediaStream([track]))
             );
 
             const audioMixerTracks = audioMixerStreams.getTracks();
@@ -6198,10 +6286,17 @@ class RoomClient {
         }
     }
 
+    generateUUIDv4() {
+        return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, (c) =>
+            (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
+        );
+    }
+
     getServerRecFileName() {
-        const dateTime = getDataTimeStringFormat();
         const roomName = this.room_id.trim();
-        return `Rec_${roomName}_${dateTime}.webm`;
+        const dateTime = getDataTimeStringFormat();
+        const uuid = this.generateUUIDv4();
+        return `Rec_${roomName}_${dateTime}_${uuid}.webm`;
     }
 
     handleMediaRecorderStart(evt) {
@@ -6218,6 +6313,8 @@ class RoomClient {
     }
 
     async syncRecordingInCloud(data) {
+        if (!this._isRecording) return;
+
         const arrayBuffer = await data.arrayBuffer();
         const chunkSize = rc.recSyncChunkSize;
         const totalChunks = Math.ceil(arrayBuffer.byteLength / chunkSize);
@@ -6231,7 +6328,7 @@ class RoomClient {
                         headers: {
                             'Content-Type': 'application/octet-stream',
                         },
-                    },
+                    }
                 );
                 console.log('Chunk synced successfully:', response.data);
             } catch (error) {
@@ -6256,11 +6353,35 @@ class RoomClient {
         }
     }
 
-    handleMediaRecorderStop(evt) {
+    async handleMediaRecorderStop(evt) {
         try {
             console.log('MediaRecorder stopped: ', evt);
             rc.recording.recSyncServerRecording ? rc.handleServerRecordingStop() : rc.handleLocalRecordingStop();
             rc.disableRecordingOptions(false);
+
+            // Only do this if cloud sync was enabled and upload to s3
+            if (rc.recording.recSyncServerRecording && rc.recording.recSyncServerToS3) {
+                try {
+                    const response = await axios.post(
+                        `${rc.recording.recSyncServerEndpoint}/recSyncFinalize?fileName=` + rc.recServerFileName
+                    );
+                    console.log('Finalized and uploaded to S3:', response.data);
+                    userLog('success', 'Recording successfully uploaded to S3.', 'top-end', 3000);
+                } catch (error) {
+                    let errorMessage = 'Finalization failed! ';
+                    if (error.response) {
+                        errorMessage += error.response.data?.message || 'Server error';
+                        console.error('Finalization error response:', error.response);
+                    } else if (error.request) {
+                        errorMessage += 'No response from server';
+                        console.error('Finalization error: No response', error.request);
+                    } else {
+                        errorMessage += error.message;
+                        console.error('Finalization error:', error.message);
+                    }
+                    userLog('warning', errorMessage, 'top-end', 3000);
+                }
+            }
         } catch (err) {
             console.error('Recording save failed', err);
         }
@@ -6430,7 +6551,7 @@ class RoomClient {
             to_peer_id: 'all',
             to_peer_name: 'all',
         };
-        this.showMessage(recAction);
+        this.showMessage(recAction, false);
 
         const recData = {
             type: 'recording',
@@ -6446,7 +6567,7 @@ class RoomClient {
             `${icons.user} ${peer_name} 
             <br /><br /> 
             <span>🔴 ${action}</span>
-            <br />`,
+            <br />`
         );
     }
 
@@ -6626,7 +6747,7 @@ class RoomClient {
                     <li>Size: ${this.bytesToSize(this.fileToSend.size)}</li>
                 </ul>`,
                 'all',
-                'all',
+                'all'
             );
             // send some metadata about our file to peers in the room
             this.socket.emit('fileInfo', fileInfo);
@@ -6670,7 +6791,7 @@ class RoomClient {
                 <li>Size: ${this.bytesToSize(this.incomingFileInfo.fileSize)}</li>
             </ul>`,
             'all',
-            'all',
+            'all'
         );
         receiveFileInfo.innerText = fileToReceiveInfo;
         receiveFileDiv.style.display = 'inline';
@@ -7014,7 +7135,7 @@ class RoomClient {
     }
 
     openVideo(data) {
-        let d, vb, e, video, pn;
+        let d, vb, e, video, pn, fsBtn;
         let peer_name = data.peer_name;
         let video_url = data.video_url + (this.isMobileSafari ? '&enablejsapi=1&mute=1' : ''); // Safari need user interaction
         let is_youtube = data.is_youtube;
@@ -7029,12 +7150,14 @@ class RoomClient {
         vb.className = 'videoMenuBarShare fadein';
         e = this.createButton('__videoExit', 'fas fa-times');
         pn = this.createButton('__pinUnpin', html.pin);
+        fsBtn = this.createButton('__videoFS', html.fullScreen);
+
         if (is_youtube) {
             video = document.createElement('iframe');
             video.setAttribute('title', peer_name);
             video.setAttribute(
                 'allow',
-                'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',
+                'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
             );
             video.setAttribute('frameborder', '0');
             video.setAttribute('allowfullscreen', true);
@@ -7046,20 +7169,17 @@ class RoomClient {
                     allowEscapeKey: false,
                     background: swalBackground,
                     position: 'top',
-                    // icon: 'info',
                     imageUrl: image.videoShare,
                     title: 'Unmute Video',
                     text: 'Tap the button below to unmute and play the video with sound.',
                     confirmButtonText: 'Unmute',
                     didOpen: () => {
-                        // Focus on the button when the popup opens
                         const unmuteButton = Swal.getConfirmButton();
                         if (unmuteButton) unmuteButton.focus();
                     },
                 }).then((result) => {
                     if (result.isConfirmed) {
                         if (video && video.contentWindow) {
-                            // Unmute the video and play
                             video.contentWindow.postMessage('{"event":"command","func":"unMute","args":""}', '*');
                             video.contentWindow.postMessage('{"event":"command","func":"playVideo","args":""}', '*');
                         }
@@ -7080,10 +7200,76 @@ class RoomClient {
         video.setAttribute('width', '100%');
         video.setAttribute('height', '100%');
         vb.appendChild(e);
+        vb.appendChild(fsBtn);
         if (!this.isMobileDevice) vb.appendChild(pn);
         d.appendChild(video);
         d.appendChild(vb);
         this.videoMediaContainer.appendChild(d);
+
+        fsBtn.addEventListener('click', () => {
+            // Try to use the Fullscreen API
+            if (
+                video.requestFullscreen ||
+                video.webkitRequestFullscreen ||
+                video.mozRequestFullScreen ||
+                video.msRequestFullscreen
+            ) {
+                this.isFullScreen() ? this.goOutFullscreen(video) : this.goInFullscreen(video);
+            } else {
+                elemDisplay('__videoFS', false);
+
+                // Maximize video with CSS
+                video.style.position = 'fixed';
+                video.style.top = 0;
+                video.style.left = 0;
+                video.style.width = '100vw';
+                video.style.height = '100vh';
+                video.style.zIndex = 9999;
+
+                // Add a close/maximize button for fallback
+                let isMaximized = true;
+                const closeBtn = document.createElement('button');
+                closeBtn.innerText = isMaximized ? 'Minimize' : 'Maximize';
+                closeBtn.style.position = 'absolute';
+                closeBtn.style.top = '1px';
+                closeBtn.style.left = '1px';
+                closeBtn.style.zIndex = 10000;
+                closeBtn.style.background = 'rgba(0,0,0,0.5)';
+                closeBtn.style.color = '#fff';
+                closeBtn.style.border = 'none';
+                closeBtn.style.padding = '8px 12px';
+                closeBtn.style.borderRadius = '4px';
+                closeBtn.style.cursor = 'pointer';
+
+                closeBtn.onclick = () => {
+                    if (isMaximized) {
+                        video.style.position = '';
+                        video.style.top = '';
+                        video.style.left = '';
+                        video.style.width = '';
+                        video.style.height = '';
+                        video.style.zIndex = '';
+                        closeBtn.innerText = 'Maximize';
+                        isMaximized = false;
+                    } else {
+                        video.style.position = 'fixed';
+                        video.style.top = 0;
+                        video.style.left = 0;
+                        video.style.width = '100vw';
+                        video.style.height = '100vh';
+                        video.style.zIndex = 9999;
+                        closeBtn.innerText = 'Minimize';
+                        isMaximized = true;
+                    }
+                };
+
+                // Ensure only one button is added
+                if (!video.parentNode.querySelector('.mobile-video-close-btn')) {
+                    closeBtn.classList.add('mobile-video-close-btn');
+                    video.parentNode.appendChild(closeBtn);
+                }
+            }
+        });
 
         const exitVideoBtn = this.getId(e.id);
         exitVideoBtn.addEventListener('click', (e) => {
@@ -7098,6 +7284,7 @@ class RoomClient {
         if (!this.isMobileDevice) {
             this.setTippy(pn.id, 'Toggle Pin video player', 'bottom');
             this.setTippy(e.id, 'Close video player', 'bottom');
+            this.setTippy(fsBtn.id, 'Full screen', 'bottom');
         }
 
         handleAspectRatio();
@@ -7290,7 +7477,7 @@ class RoomClient {
                     : this.userLog(
                           'info',
                           `${icons.chat} Chat not will be shown, when you receive a message`,
-                          'top-end',
+                          'top-end'
                       );
                 break;
             case 'speechMessages':
@@ -7301,19 +7488,19 @@ class RoomClient {
                     ? this.userLog(
                           'info',
                           `${icons.transcript} Transcript will be shown, when you receive a message`,
-                          'top-end',
+                          'top-end'
                       )
                     : this.userLog(
                           'info',
                           `${icons.transcript} Transcript not will be shown, when you receive a message`,
-                          'top-end',
+                          'top-end'
                       );
                 break;
             case 'video_start_privacy':
                 this.userLog(
                     'info',
                     `${icons.moderator} Moderator: everyone starts in privacy mode ${status}`,
-                    'top-end',
+                    'top-end'
                 );
                 break;
             case 'audio_start_muted':
@@ -7326,35 +7513,42 @@ class RoomClient {
                 this.userLog(
                     'info',
                     `${icons.moderator} Moderator: everyone can't unmute themselves ${status}`,
-                    'top-end',
+                    'top-end'
                 );
                 break;
             case 'video_cant_unhide':
                 this.userLog(
                     'info',
                     `${icons.moderator} Moderator: everyone can't unhide themselves ${status}`,
-                    'top-end',
+                    'top-end'
                 );
                 break;
             case 'screen_cant_share':
                 this.userLog(
                     'info',
                     `${icons.moderator} Moderator: everyone can't share the screen ${status}`,
-                    'top-end',
+                    'top-end'
                 );
                 break;
             case 'chat_cant_privately':
                 this.userLog(
                     'info',
                     `${icons.moderator} Moderator: everyone can't chat privately ${status}`,
-                    'top-end',
+                    'top-end'
                 );
                 break;
             case 'chat_cant_chatgpt':
                 this.userLog(
                     'info',
                     `${icons.moderator} Moderator: everyone can't chat with ChatGPT ${status}`,
-                    'top-end',
+                    'top-end'
+                );
+                break;
+            case 'chat_cant_deep_seek':
+                this.userLog(
+                    'info',
+                    `${icons.moderator} Moderator: everyone can't chat with DeepSeek ${status}`,
+                    'top-end'
                 );
                 break;
             case 'media_cant_sharing':
@@ -8021,7 +8215,7 @@ class RoomClient {
                         'warning',
                         'To use this feature, please toggle Hide self view before',
                         'top-end',
-                        6000,
+                        6000
                     );
                 }
                 const videoContainer = this.getId(videoContainerId);
@@ -8346,7 +8540,7 @@ class RoomClient {
                                 'warning',
                                 from_peer_name + '  ' + _PEER.audioOff + ' has closed yours audio',
                                 'top-end',
-                                10000,
+                                10000
                             );
                         }
                     }
@@ -8357,7 +8551,7 @@ class RoomClient {
                             mediaType.audio,
                             image.unmute,
                             'Enable Microphone',
-                            'Allow the presenter to enable your microphone?',
+                            'Allow the presenter to enable your microphone?'
                         );
                     }
                     break;
@@ -8368,7 +8562,7 @@ class RoomClient {
                             'warning',
                             from_peer_name + '  ' + _PEER.videoOff + ' has closed yours video',
                             'top-end',
-                            10000,
+                            10000
                         );
                     }
                     break;
@@ -8378,7 +8572,7 @@ class RoomClient {
                             mediaType.video,
                             image.unhide,
                             'Enable Camera',
-                            'Allow the presenter to enable your camera?',
+                            'Allow the presenter to enable your camera?'
                         );
                     }
                     break;
@@ -8390,7 +8584,7 @@ class RoomClient {
                                 'warning',
                                 from_peer_name + '  ' + _PEER.screenOff + ' has closed yours screen share',
                                 'top-end',
-                                10000,
+                                10000
                             );
                         }
                     }
@@ -8401,7 +8595,7 @@ class RoomClient {
                             mediaType.screen,
                             image.start,
                             'Start Screen share',
-                            'Allow the presenter to start your screen share?',
+                            'Allow the presenter to start your screen share?'
                         );
                     }
                     break;
@@ -8740,7 +8934,7 @@ class RoomClient {
         const avatarImg = getParticipantAvatar(peer_name, peer_avatar);
 
         const generateChatAboutHTML = (imgSrc, title, status = 'online', participants = '') => {
-            const isSensitiveChat = !['all', 'ChatGPT'].includes(peer_id) && title.length > 15;
+            const isSensitiveChat = !['all', 'ChatGPT', 'DeepSeek'].includes(peer_id) && title.length > 15;
             const truncatedTitle = isSensitiveChat ? `${title.substring(0, 10)}*****` : title;
             return `
                 <img class="all-participants-img" 
@@ -8766,7 +8960,7 @@ class RoomClient {
         for (let i = 0; i < participantsListItems.length; i++) {
             participantsListItems[i].classList.remove('active');
             participantsListItems[i].classList.remove('pulsate'); // private new message to read
-            if (!['all', 'ChatGPT'].includes(peer_id)) {
+            if (!['all', 'ChatGPT', 'DeepSeek'].includes(peer_id)) {
                 // icon private new message to read
                 this.getId(`${peer_id}-unread-msg`).classList.add('hidden');
             }
@@ -8774,6 +8968,8 @@ class RoomClient {
         participant.classList.add('active');
 
         isChatGPTOn = false;
+        isDeepSeekOn = false;
+
         console.log('Display messages', peer_id);
 
         switch (peer_id) {
@@ -8784,6 +8980,19 @@ class RoomClient {
                 isChatGPTOn = true;
                 chatAbout.innerHTML = generateChatAboutHTML(image.chatgpt, 'ChatGPT');
                 this.getId('chatGPTMessages').style.display = 'block';
+                break;
+            case 'DeepSeek':
+                if (this._moderator.chat_cant_deep_seek) {
+                    return userLog(
+                        'warning',
+                        'The moderator does not allow you to chat with DeepSeek',
+                        'top-end',
+                        6000
+                    );
+                }
+                isDeepSeekOn = true;
+                chatAbout.innerHTML = generateChatAboutHTML(image.deepSeek, 'DeepSeek');
+                this.getId('deepSeekMessages').style.display = 'block';
                 break;
             case 'all':
                 chatAbout.innerHTML = generateChatAboutHTML(image.all, 'Public chat', 'online', participantsCount);
@@ -8817,6 +9026,7 @@ class RoomClient {
 
     hidePeerMessages() {
         elemDisplay('chatGPTMessages', false);
+        elemDisplay('deepSeekMessages', false);
         elemDisplay('chatPublicMessages', false);
         elemDisplay('chatPrivateMessages', false);
     }
@@ -8982,7 +9192,7 @@ class RoomClient {
                 id,
                 `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5;">${peerInfoFormatted}</div>`,
                 'top-start',
-                true,
+                true
             );
         }
     }
@@ -9038,7 +9248,7 @@ class RoomClient {
             'Geolocation',
             'Geolocation requested. Please wait for confirmation...',
             6000,
-            'geolocation',
+            'geolocation'
         );
     }
 
@@ -9109,13 +9319,13 @@ class RoomClient {
                     }
                     rc.sendPeerGeoLocation(peer_id, 'geoLocationKO', `${rc.peer_name}: ${geoError}`);
                     rc.userLog('warning', geoError, 'top-end', 5000);
-                },
+                }
             );
         } else {
             rc.sendPeerGeoLocation(
                 peer_id,
                 'geoLocationKO',
-                `${rc.peer_name}: Geolocation is not supported by this browser`,
+                `${rc.peer_name}: Geolocation is not supported by this browser`
             );
             rc.userLog('warning', 'Geolocation is not supported by this browser', 'top-end', 5000);
         }
@@ -9147,7 +9357,7 @@ class RoomClient {
                 // openURL(`http://maps.apple.com/?ll=${geoLocation.latitude},${geoLocation.longitude}`, true);
                 openURL(
                     `https://www.google.com/maps/search/?api=1&query=${geoLocation.latitude},${geoLocation.longitude}`,
-                    true,
+                    true
                 );
             }
         });
@@ -9220,7 +9430,7 @@ class RoomClient {
                         img.setAttribute('style', 'cursor:pointer; padding: 2px; border-radius: 5px;');
                         img.setAttribute(
                             'avatarData',
-                            avatar.avatar_id + '|' + avatar.avatar_name + '|' + avatar.preview_video_url,
+                            avatar.avatar_id + '|' + avatar.avatar_name + '|' + avatar.preview_video_url
                         );
                         img.onclick = () => {
                             const avatarImages = document.querySelectorAll('.avatarImg');
@@ -9437,7 +9647,7 @@ class RoomClient {
                         'warning',
                         'You’ve reached your quota limit for this demo account. Please consider upgrading for more features.',
                         6000,
-                        'top',
+                        'top'
                     );
                     break;
                 // ...
@@ -9544,7 +9754,7 @@ class RoomClient {
         }
         setTimeout(() => {
             this.streamingTask(
-                `Welcome to ${BRAND.app.name}! Please Open the Chat and navigate to the ChatGPT section. Feel free to ask me any questions you have.`,
+                `Welcome to ${BRAND.app.name}! Please Open the Chat and navigate to the ChatGPT section. Feel free to ask me any questions you have.`
             );
         }, 2000);
     }
@@ -9575,7 +9785,7 @@ class RoomClient {
                             task.action();
                             resolve();
                         }, task.delay);
-                    }),
+                    })
             );
         }, Promise.resolve());
     }
@@ -9757,7 +9967,7 @@ class RoomClient {
             return this.userLog(
                 'warning',
                 "The provided File is not valid. Please ensure it's .mp4, webm or ogg video file",
-                'top-end',
+                'top-end'
             );
         }
 
@@ -9814,7 +10024,7 @@ class RoomClient {
             return this.userLog(
                 'warning',
                 'The provided URL is not valid. Please ensure it links to an .mp4 video file',
-                'top-end',
+                'top-end'
             );
         }
 
@@ -9913,7 +10123,7 @@ class RoomClient {
                 'warning',
                 'Unable to start the RTMP stream. Please ensure the RTMP server is running. If the problem persists, contact the administrator',
                 'top-end',
-                6000,
+                6000
             );
         }
 

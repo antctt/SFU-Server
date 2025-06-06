@@ -64,12 +64,16 @@ dev dependencies: {
  * @license For commercial or closed source, contact us at license.mirotalk@gmail.com or purchase directly via CodeCanyon
  * @license CodeCanyon: https://codecanyon.net/item/mirotalk-sfu-webrtc-realtime-video-conferences/40769970
  * @author  Miroslav Pejic - miroslav.pejic.85@gmail.com
- * @version 1.8.17
+ * @version 1.8.60
  *
  */
 
 const express = require('express');
 const { auth, requiresAuth } = require('express-openid-connect');
+const { withFileLock } = require('./MutexManager');
+const { PassThrough } = require('stream');
+const { S3Client } = require('@aws-sdk/client-s3');
+const { Upload } = require('@aws-sdk/lib-storage');
 const cors = require('cors');
 const compression = require('compression');
 const socketIo = require('socket.io');
@@ -197,8 +201,8 @@ if (sentryEnabled) {
 
 // Handle WebHook
 const webhook = {
-    enabled: config?.webhook?.enabled || false,
-    url: config?.webhook?.url || 'http://localhost:8888/webhook-endpoint',
+    enabled: config?.integrations?.webhook?.enabled || false,
+    url: config?.integrations?.webhook?.url || 'http://localhost:8888/webhook-endpoint',
 };
 
 // Discord Bot
@@ -259,6 +263,18 @@ if (rtmpEnabled) {
         fs.mkdirSync(dir.rtmp, { recursive: true });
     }
 }
+
+// ####################################################
+// AWS S3 SETUP
+// ####################################################
+
+const s3Client = new S3Client({
+    region: config?.integrations?.aws?.region, // Set your AWS region
+    credentials: {
+        accessKeyId: config?.integrations?.aws?.accessKeyId,
+        secretAccessKey: config?.integrations?.aws?.secretAccessKey,
+    },
+});
 
 // html views
 const views = {
@@ -411,7 +427,7 @@ function startServer() {
                     res.setHeader('Content-Type', 'application/javascript');
                 } //...
             },
-        }),
+        })
     );
     app.use(cors(corsOptions));
     app.use(compression());
@@ -736,7 +752,7 @@ function startServer() {
             // 2. Protect room access with configuration check
             if (!OIDC.enabled && hostCfg.protected && !hostCfg.users_from_db) {
                 const roomExists = hostCfg.users.some(
-                    (user) => user.allowed_rooms && (user.allowed_rooms.includes(roomId) || roomList.has(roomId)),
+                    (user) => user.allowed_rooms && (user.allowed_rooms.includes(roomId) || roomList.has(roomId))
                 );
                 log.debug('/join/:roomId exists from config allowed rooms', roomExists);
                 return roomExists ? htmlInjector.injectHtml(views.room, res) : res.redirect('/whoAreYou/' + roomId);
@@ -824,7 +840,7 @@ function startServer() {
             });
 
             const isPresenter = Boolean(
-                hostCfg?.presenters?.join_first || hostCfg?.presenters?.list?.includes(username),
+                hostCfg?.presenters?.join_first || hostCfg?.presenters?.list?.includes(username)
             );
 
             const token = encodeToken({ username: username, password: password, presenter: isPresenter });
@@ -845,82 +861,185 @@ function startServer() {
     });
 
     // ####################################################
-    // KEEP RECORDING ON SERVER DIR
+    // RECORDING UTILITY
     // ####################################################
 
-    app.post('/recSync', (req, res) => {
-        // Store recording...
-        if (serverRecordingEnabled) {
-            //
-            try {
-                const { fileName } = checkXSS(req.query);
+    function isValidRequest(req, fileName, roomId, checkContentType = true) {
+        const contentType = req.headers['content-type'];
+        if (checkContentType && contentType !== 'application/octet-stream') {
+            throw new Error('Invalid content type');
+        }
 
-                if (!fileName) {
-                    return res.status(400).send('Filename not provided');
-                }
+        if (!fileName || sanitizeFilename(fileName) !== fileName || !Validator.isValidRecFileNameFormat(fileName)) {
+            throw new Error('Invalid file name');
+        }
 
-                // Sanitize and validate filename
-                const safeFileName = sanitizeFilename(fileName);
-                if (safeFileName !== fileName || !Validator.isValidRecFileNameFormat(fileName)) {
-                    log.warn('[RecSync] - Invalid file name:', fileName);
-                    return res.status(400).send('Invalid file name');
-                }
+        if (!roomList || typeof roomList.has !== 'function' || !roomList.has(roomId)) {
+            throw new Error('Invalid room ID');
+        }
+    }
 
-                const parts = fileName.split('_');
-                const roomId = parts[1];
+    function getRoomIdFromFilename(fileName) {
+        const parts = fileName.split('_');
+        if (parts.length >= 2) {
+            return parts[1];
+        }
+        throw new Error('Invalid file name format');
+    }
 
-                if (!roomList.has(roomId)) {
-                    log.warn('[RecSync] - RoomID not exists in filename', fileName);
-                    return res.status(400).send('Invalid file name');
-                }
+    function deleteFile(filePath) {
+        if (!fs.existsSync(filePath)) return false;
 
-                // Ensure directory exists
-                if (!fs.existsSync(dir.rec)) {
-                    fs.mkdirSync(dir.rec, { recursive: true });
-                }
+        try {
+            fs.unlinkSync(filePath);
+            log.info(`[Upload] File ${filePath} removed from local after S3 upload`);
+        } catch (err) {
+            log.error(`[Upload] Failed to delete local file ${filePath}`, err.message);
+        }
+    }
 
-                // Resolve and validate file path
-                const filePath = path.resolve(dir.rec, fileName);
-                if (!filePath.startsWith(path.resolve(dir.rec))) {
-                    log.warn('[RecSync] - Attempt to save file outside allowed directory:', fileName);
-                    return res.status(400).send('Invalid file path');
-                }
+    // ####################################################
+    // RECORDING HANDLERS
+    // ####################################################
 
-                //Validate content type
-                if (!['application/octet-stream'].includes(req.headers['content-type'])) {
-                    log.warn('[RecSync] - Invalid content type:', req.headers['content-type']);
-                    return res.status(400).send('Invalid content type');
-                }
+    async function uploadToS3(filePath, fileName, roomId, bucket, s3Client) {
+        if (!fs.existsSync(filePath)) return false;
 
-                // Set up write stream and handle file upload
+        return withFileLock(filePath, async () => {
+            const fileStream = fs.createReadStream(filePath);
+            const key = `recordings/${roomId}/${fileName}`;
+
+            const upload = new Upload({
+                client: s3Client,
+                params: {
+                    Bucket: bucket,
+                    Key: key,
+                    Body: fileStream,
+                    Metadata: {
+                        'room-id': roomId,
+                        'file-name': fileName,
+                    },
+                },
+            });
+
+            await upload.done();
+
+            return { success: true, fileName, key };
+        });
+    }
+
+    async function saveLocally(filePath, req, recMaxFileSize) {
+        return withFileLock(filePath, () => {
+            return new Promise((resolve, reject) => {
                 const writeStream = fs.createWriteStream(filePath, { flags: 'a' });
                 let receivedBytes = 0;
 
                 req.on('data', (chunk) => {
                     receivedBytes += chunk.length;
                     if (receivedBytes > recMaxFileSize) {
-                        req.destroy(); // Stop receiving data
-                        writeStream.destroy(); // Stop writing data
-                        log.warn('[RecSync] - File size exceeds limit:', fileName);
-                        return res.status(413).send('File too large');
+                        req.destroy();
+                        writeStream.destroy();
+                        return reject(new Error('File size exceeds limit'));
                     }
                 });
 
                 req.pipe(writeStream);
 
-                writeStream.on('error', (err) => {
-                    log.error('[RecSync] - Error writing to file:', err.message);
-                    res.status(500).send('Internal Server Error');
-                });
+                writeStream.on('finish', () => resolve({ status: 'file_saved_locally', path: filePath }));
+                writeStream.on('error', reject);
+            });
+        });
+    }
 
-                writeStream.on('finish', () => {
-                    log.debug('[RecSync] - File saved successfully:', fileName);
-                    res.status(200).send('File uploaded successfully');
-                });
-            } catch (err) {
-                log.error('[RecSync] - Error processing upload', err.message);
-                res.status(500).send('Internal Server Error');
+    // ####################################################
+    // RECORDING ROUTE HANDLER
+    // ####################################################
+
+    app.post('/recSync', async (req, res) => {
+        if (!serverRecordingEnabled) {
+            return res.status(403).json({ error: 'Recording disabled' });
+        }
+
+        if (!fs.existsSync(dir.rec)) {
+            fs.mkdirSync(dir.rec, { recursive: true });
+        }
+
+        try {
+            const start = Date.now();
+
+            const { fileName } = checkXSS(req.query);
+            const roomId = getRoomIdFromFilename(fileName);
+
+            isValidRequest(req, fileName, roomId);
+
+            const filePath = path.resolve(dir.rec, fileName);
+            const passThrough = new PassThrough();
+
+            let totalBytes = 0;
+
+            passThrough.on('data', (chunk) => {
+                totalBytes += chunk.length;
+            });
+
+            req.pipe(passThrough);
+
+            const localStream = passThrough.pipe(new PassThrough());
+
+            await saveLocally(filePath, localStream, recMaxFileSize);
+
+            const duration = ((Date.now() - start) / 1000).toFixed(2);
+            const sizeMB = (totalBytes / 1024 / 1024).toFixed(2);
+
+            log.info(`[Upload] Saved ${fileName} (${sizeMB} MB) in ${duration}s`);
+
+            return res.status(200).json({ status: 'upload_complete', fileName });
+        } catch (error) {
+            log.error('Upload error:', error.message);
+
+            if (error.message.includes('exceeds limit')) {
+                res.status(413).json({ error: 'File too large' });
+            } else if (['Invalid content type', 'Invalid file name', 'Invalid room ID'].includes(error.message)) {
+                res.status(400).json({ error: error.message });
+            } else if (error.message.includes('already in progress')) {
+                res.status(429).json({ error: 'Upload already in progress' });
+            } else {
+                res.status(500).json({ error: 'Internal Server Error' });
             }
+        }
+    });
+
+    app.post('/recSyncFinalize', async (req, res) => {
+        try {
+            const shouldUploadToS3 = config?.integrations?.aws?.enabled && config?.media?.recording?.uploadToS3;
+            if (!shouldUploadToS3 || !serverRecordingEnabled) {
+                return res.status(403).json({ error: 'Recording disabled' });
+            }
+            const start = Date.now();
+
+            const { fileName } = checkXSS(req.query);
+            const roomId = getRoomIdFromFilename(fileName);
+
+            isValidRequest(req, fileName, roomId, false);
+
+            const filePath = path.resolve(dir.rec, fileName);
+
+            if (!fs.existsSync(filePath)) {
+                return res.status(500).json({ error: 'Rec Finalization failed file not exists' });
+            }
+
+            const bucket = config?.integrations?.aws?.bucket;
+            const s3 = await uploadToS3(filePath, fileName, roomId, bucket, s3Client);
+
+            const duration = ((Date.now() - start) / 1000).toFixed(2);
+
+            log.info(`[Rec Finalization] done ${fileName} in ${duration}s`, { ...s3 });
+
+            deleteFile(filePath); // Delete local file after successful upload
+
+            return res.status(200).json({ status: 's3_upload_complete', ...s3 });
+        } catch (error) {
+            log.error('Rec Finalization error', error.message);
+            return res.status(500).json({ error: 'Rec Finalization failed' });
         }
     });
 
@@ -1235,7 +1354,7 @@ function startServer() {
 
         if (restApi.allowed && !restApi.allowed.slack) {
             return res.end(
-                '`This endpoint has been disabled`. Please contact the administrator for further information.',
+                '`This endpoint has been disabled`. Please contact the administrator for further information.'
             );
         }
 
@@ -1329,6 +1448,7 @@ function startServer() {
                 mattermost: config.integrations?.mattermost?.enabled ? config.integrations.mattermost : false,
                 slack: slackEnabled ? config.integrations?.slack : false,
                 chatGPT: config.integrations?.chatGPT?.enabled ? config.integrations.chatGPT : false,
+                deepSeek: config.integrations?.deepSeek?.enabled ? config.integrations.deepSeek : false,
                 email_alerts: config?.integrations?.email?.alert ? config.integrations.email : false,
             },
 
@@ -1394,7 +1514,7 @@ function startServer() {
         ╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝      ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝ started...
     
         `,
-            'font-family:monospace',
+            'font-family:monospace'
         );
 
         if (config?.integrations?.ngrok?.enabled && config?.integrations?.ngrok?.authToken !== '') {
@@ -1538,10 +1658,19 @@ function startServer() {
 
             const room = getRoom(socket);
 
-            const { peer_name, peer_id, peer_uuid, peer_token, os_name, os_version, browser_name, browser_version } =
-                data.peer_info;
+            const {
+                peer_name,
+                peer_id,
+                peer_uuid,
+                peer_token,
+                peer_presenter,
+                os_name,
+                os_version,
+                browser_name,
+                browser_version,
+            } = data.peer_info;
 
-            let is_presenter = true;
+            let is_presenter = peer_presenter;
 
             // User Auth required or detect token, we check if peer valid
             if (hostCfg.user_auth || peer_token) {
@@ -1565,7 +1694,7 @@ function startServer() {
                             return cb('unauthorized');
                         }
 
-                        const is_presenter =
+                        is_presenter =
                             presenter === '1' ||
                             presenter === 'true' ||
                             (hostCfg?.presenters?.join_first && room?.getPeersCount() === 0);
@@ -1632,14 +1761,13 @@ function startServer() {
                 peer_uuid: peer_uuid,
                 is_presenter: is_presenter,
             };
-            // first we check if the username match the presenters username
-            if (hostCfg?.presenters?.list?.includes(peer_name)) {
+            // first we check if the username match the presenters username else if join_first enabled
+            if (
+                hostCfg?.presenters?.list?.includes(peer_name) ||
+                (hostCfg?.presenters?.join_first && Object.keys(presenters[socket.room_id]).length === 0)
+            ) {
+                presenter.is_presenter = true;
                 presenters[socket.room_id][socket.id] = presenter;
-            } else {
-                // if not match the presenters username, the first one join room is the presenter
-                if (Object.keys(presenters[socket.room_id]).length === 0) {
-                    presenters[socket.room_id][socket.id] = presenter;
-                }
             }
 
             log.info('[Join] - Connected presenters grp by roomId', presenters);
@@ -1656,13 +1784,13 @@ function startServer() {
                 });
             }
 
-            peer.updatePeerInfo({ type: 'presenter', status: isPresenter });
-
-            log.info('[Join] - Is presenter', {
+            log.info('[Join] - Is Peer presenter', {
                 roomId: socket.room_id,
                 peer_name: peer_name,
                 peer_presenter: isPresenter,
             });
+
+            peer.updatePeerInfo({ type: 'presenter', status: isPresenter });
 
             if (room.isLocked() && !isPresenter) {
                 log.debug('The user was rejected because the room is locked, and they are not a presenter');
@@ -1671,7 +1799,7 @@ function startServer() {
 
             if (room.isLobbyEnabled() && !isPresenter) {
                 log.debug(
-                    'The user is currently waiting to join the room because the lobby is enabled, and they are not a presenter',
+                    'The user is currently waiting to join the room because the lobby is enabled, and they are not a presenter'
                 );
                 room.broadCast(socket.id, 'roomLobby', {
                     peer_id: peer_id,
@@ -1703,6 +1831,7 @@ function startServer() {
             // handle WebHook
             if (webhook.enabled) {
                 // Trigger a POST request when a user joins
+                data.timestamp = log.getDateTime(false);
                 axios
                     .post(webhook.url, { event: 'join', data })
                     .then((response) => log.debug('Join event tracked:', response.data))
@@ -1726,7 +1855,7 @@ function startServer() {
                 const rtpCapabilities = room.getRtpCapabilities();
                 callback(rtpCapabilities);
             } catch (err) {
-                log.warn('Failed to get Router RTP Capabilities', {
+                log.error('Failed to get Router RTP Capabilities', {
                     error: err.message,
                     peerInfo,
                 });
@@ -1836,7 +1965,7 @@ function startServer() {
                     producerTransportId,
                     rtpParameters,
                     kind,
-                    appData.mediaType,
+                    appData.mediaType
                 );
 
                 log.debug('Produce', {
@@ -2217,7 +2346,7 @@ function startServer() {
                     socket.room_id,
                     socket.id,
                     data.from_peer_name,
-                    data.from_peer_uuid,
+                    data.from_peer_uuid
                 );
                 if (!isPresenter) return;
             }
@@ -2269,6 +2398,7 @@ function startServer() {
                 case 'screen_cant_share':
                 case 'chat_cant_privately':
                 case 'chat_cant_chatgpt':
+                case 'chat_cant_deep_seek':
                 case 'media_cant_sharing':
                     room.broadCast(socket.id, 'updateRoomModerator', moderator);
                     break;
@@ -2468,34 +2598,51 @@ function startServer() {
         });
 
         socket.on('getChatGPT', async ({ time, room, name, prompt, context }, cb) => {
-            if (!roomExists(socket)) return;
+            if (!roomExists(socket)) {
+                return cb({ message: 'Room not found' });
+            }
 
-            if (!config?.integrations?.chatGPT?.enabled) return cb({ message: 'ChatGPT seems disabled, try later!' });
+            if (!config?.integrations?.chatGPT?.enabled) {
+                return cb({ message: 'ChatGPT integration is disabled. Please try again later!' });
+            }
 
             // https://platform.openai.com/docs/api-reference/completions/create
             try {
+                if (!prompt || !Array.isArray(context)) {
+                    throw new Error('Invalid input: Prompt or context is missing or invalid');
+                }
                 // Add the prompt to the context
                 context.push({ role: 'user', content: prompt });
+
                 // Call OpenAI's API to generate response
                 const completion = await chatGPT.chat.completions.create({
                     model: config?.integrations?.chatGPT?.model || 'gpt-3.5-turbo',
                     messages: context,
-                    max_tokens: config?.integrations?.chatGPT?.max_tokens,
-                    temperature: config?.integrations?.chatGPT?.temperature,
+                    max_tokens: config?.integrations?.chatGPT?.max_tokens || 1024,
+                    temperature: config?.integrations?.chatGPT?.temperature || 0.7,
                 });
-                // Extract message from completion
+
+                // Extract the assistant's response
                 const message = completion.choices[0].message.content.trim();
+                if (!message) {
+                    throw new Error('ChatGPT returned an empty response.');
+                }
+
                 // Add response to context
                 context.push({ role: 'assistant', content: message });
-                // Log conversation details
-                log.info('ChatGPT', {
-                    time: time,
-                    room: room,
-                    name: name,
-                    context: context,
+
+                // Log the conversation details
+                log.info('ChatGPT Response', {
+                    time,
+                    room,
+                    name,
+                    prompt,
+                    response: message,
+                    context,
                 });
+
                 // Callback response to client
-                cb({ message: message, context: context });
+                cb({ message, context });
             } catch (error) {
                 if (error.name === 'APIError') {
                     log.error('ChatGPT', {
@@ -2505,12 +2652,83 @@ function startServer() {
                         code: error.code,
                         type: error.type,
                     });
-                    cb({ message: error.message });
+                    return cb({ message: `ChatGPT API Error: ${error.message}` });
                 } else {
-                    // Non-API error
-                    log.error('ChatGPT', error);
-                    cb({ message: error.message });
+                    // Handle general errors
+                    log.error('ChatGPT Error', error);
+                    cb({ message: `Error: ${error.message}` });
                 }
+            }
+        });
+
+        socket.on('getDeepSeek', async ({ time, room, name, prompt, context }, cb) => {
+            if (!roomExists(socket)) {
+                return cb({ message: 'Room not found' });
+            }
+
+            if (!config?.integrations?.deepSeek?.enabled) {
+                return cb({ message: 'DeepSeek integration is disabled. Please try again later!' });
+            }
+
+            try {
+                if (!prompt || !Array.isArray(context)) {
+                    throw new Error('Invalid input: Prompt or context is missing or invalid.');
+                }
+
+                // Add the prompt to the context
+                context.push({ role: 'user', content: prompt });
+
+                // Call DeepSeek's API to generate response
+                const response = await axios.post(
+                    `${config?.integrations?.deepSeek?.basePath}chat/completions`,
+                    {
+                        model: config?.integrations?.deepSeek?.model || 'deepseek-chat',
+                        messages: context,
+                        max_tokens: config?.integrations?.deepSeek?.max_tokens || 1024,
+                        temperature: config?.integrations?.deepSeek?.temperature || 0.7,
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${config?.integrations?.deepSeek?.apiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                    }
+                );
+
+                // Extract the assistant's response
+                const message = response.data.choices[0]?.message?.content?.trim();
+                if (!message) {
+                    throw new Error('DeepSeek returned an empty response.');
+                }
+
+                // Add response to context
+                context.push({ role: 'assistant', content: message });
+
+                // Log the conversation details
+                log.info('DeepSeek Response', {
+                    time,
+                    room,
+                    name,
+                    prompt,
+                    response: message,
+                    context,
+                });
+
+                // Send the response back to the client
+                cb({ message, context });
+            } catch (error) {
+                // Handle API-specific errors
+                if (error.response) {
+                    log.error('DeepSeek API Error', {
+                        status: error.response.status,
+                        data: error.response.data,
+                    });
+                    return cb({ message: `DeepSeek API Error: ${error.response.data?.message || error.message}` });
+                }
+
+                // Handle general errors
+                log.error('DeepSeek Error', error);
+                cb({ message: `Error: ${error.message}` });
             }
         });
 
@@ -2583,7 +2801,7 @@ function startServer() {
                             'content-type': 'application/json',
                             'x-api-key': config?.integrations?.videoAI?.apiKey,
                         },
-                    },
+                    }
                 );
 
                 const data = { response: response.data };
@@ -2613,7 +2831,7 @@ function startServer() {
                             'Content-Type': 'application/json',
                             'X-Api-Key': config?.integrations?.videoAI?.apiKey,
                         },
-                    },
+                    }
                 );
 
                 const data = { response: response.data.data };
@@ -2643,7 +2861,7 @@ function startServer() {
                             'Content-Type': 'application/json',
                             'X-Api-Key': config?.integrations?.videoAI?.apiKey,
                         },
-                    },
+                    }
                 );
 
                 const data = { response: response.data };
@@ -2676,7 +2894,7 @@ function startServer() {
                             'Content-Type': 'application/json',
                             'X-Api-Key': config?.integrations?.videoAI?.apiKey,
                         },
-                    },
+                    }
                 );
 
                 const data = { response: response.data };
@@ -2708,7 +2926,7 @@ function startServer() {
                             'Content-Type': 'application/json',
                             'X-Api-Key': config?.integrations?.videoAI?.apiKey,
                         },
-                    },
+                    }
                 );
 
                 const data = { response: response.data };
@@ -2768,7 +2986,7 @@ function startServer() {
                             'Content-Type': 'application/json',
                             'X-Api-Key': config?.integrations?.videoAI?.apiKey,
                         },
-                    },
+                    }
                 );
 
                 const data = { response: response.data };
@@ -3030,6 +3248,20 @@ function startServer() {
 
             log.debug('[Disconnect] - peer name', { peer_name, reason });
 
+            if (webhook.enabled) {
+                const data = {
+                    timestamp: log.getDateTime(false),
+                    room_id: socket.room_id,
+                    peer: peer?.peer_info,
+                    reason: reason,
+                };
+                // Trigger a POST request when a user disconnects
+                axios
+                    .post(webhook.url, { event: 'disconnect', data })
+                    .then((response) => log.debug('Disconnect event tracked:', response.data))
+                    .catch((error) => log.error('Error tracking disconnect event:', error.message));
+            }
+
             room.removePeer(socket.id);
 
             if (room.getPeersCount() === 0) {
@@ -3055,21 +3287,6 @@ function startServer() {
 
             if (isPresenter) removeIP(socket);
 
-            if (webhook.enabled) {
-                const data = {
-                    timestamp: log.getDateTime(false),
-                    room_id: socket.room_id,
-                    peer_name: peer_name,
-                    presenter: isPresenter,
-                    reason: reason,
-                };
-                // Trigger a POST request when a user disconnects
-                axios
-                    .post(webhook.url, { event: 'disconnect', data })
-                    .then((response) => log.debug('Disconnect event tracked:', response.data))
-                    .catch((error) => log.error('Error tracking disconnect event:', error.message));
-            }
-
             socket.room_id = null;
         });
 
@@ -3087,6 +3304,19 @@ function startServer() {
             const isPresenter = isPeerPresenter(socket.room_id, socket.id, peer_name, peer_uuid);
 
             log.debug('Exit room', peer_name);
+
+            if (webhook.enabled) {
+                const data = {
+                    timestamp: log.getDateTime(false),
+                    room_id: socket.room_id,
+                    peer: peer?.peer_info,
+                };
+                // Trigger a POST request when a user exits
+                axios
+                    .post(webhook.url, { event: 'exit', data })
+                    .then((response) => log.debug('ExitRoom event tracked:', response.data))
+                    .catch((error) => log.error('Error tracking exitRoom event:', error.message));
+            }
 
             room.removePeer(socket.id);
 
@@ -3112,20 +3342,6 @@ function startServer() {
             }
 
             if (isPresenter) removeIP(socket);
-
-            if (webhook.enabled) {
-                const data = {
-                    timestamp: log.getDateTime(false),
-                    room_id: socket.room_id,
-                    peer_name: peer_name,
-                    presenter: isPresenter,
-                };
-                // Trigger a POST request when a user exits
-                axios
-                    .post(webhook.url, { event: 'exit', data })
-                    .then((response) => log.debug('ExitROom event tracked:', response.data))
-                    .catch((error) => log.error('Error tracking exitRoom event:', error.message));
-            }
 
             socket.room_id = null;
 
@@ -3278,15 +3494,22 @@ function startServer() {
             }
 
             const isPresenter =
-                // First condition: join_first validation
+                // 1. Check if join_first mode is enabled and peer matches presenter criteria:
+                //    - Presenters list contains the peer's room_id and peer_id
+                //    - Peer's name and UUID match the stored values
+                //    - Presenter object has additional properties (length > 1)
                 (hostCfg?.presenters?.join_first &&
                     presenters[room_id]?.[peer_id]?.peer_name === peer_name &&
                     presenters[room_id]?.[peer_id]?.peer_uuid === peer_uuid &&
                     Object.keys(presenters[room_id]?.[peer_id] || {}).length > 1) ||
-                // Fallback condition: list check
-                hostCfg?.presenters?.list?.includes(peer_name);
+                // 2. Check if peer_name exists in the static presenters list configuration
+                hostCfg?.presenters?.list?.includes(peer_name) ||
+                // 3. Check if peer is explicitly marked as presenter (e.g., from token)
+                presenters[room_id]?.[peer_id]?.is_presenter ||
+                // 4. Default case (not a presenter)
+                false;
 
-            log.debug('isPeerPresenter', {
+            log.debug('isPeerPresenter Check', {
                 room_id: room_id,
                 peer_id: peer_id,
                 peer_name: peer_name,
@@ -3296,7 +3519,7 @@ function startServer() {
 
             return isPresenter;
         } catch (err) {
-            log.error('isPeerPresenter', err);
+            log.error('isPeerPresenter Check error', err);
             return false;
         }
     }
@@ -3315,7 +3538,7 @@ function startServer() {
                     },
                     {
                         timeout: 5000, // Timeout set to 5 seconds (5000 milliseconds)
-                    },
+                    }
                 );
                 return response.data && response.data.message === true;
             } catch (error) {
@@ -3446,7 +3669,7 @@ function startServer() {
                         },
                         {
                             timeout: 5000, // Timeout set to 5 seconds (5000 milliseconds)
-                        },
+                        }
                     );
                     log.debug('AXIOS roomExistsForUser', { room: room, exists: true });
                     return response.data && response.data.message === true;
@@ -3473,7 +3696,7 @@ function startServer() {
                     },
                     {
                         timeout: 5000, // Timeout set to 5 seconds (5000 milliseconds)
-                    },
+                    }
                 );
                 const allowedRooms = response.data ? response.data.message : {};
                 log.debug('AXIOS getUserAllowedRooms', allowedRooms);
@@ -3501,68 +3724,84 @@ function startServer() {
     }
 
     async function isRoomAllowedForUser(message, username, room) {
-        const logData = { message, username, room };
-
-        log.debug('isRoomAllowedForUser ------>', logData);
-
-        if (!username || !room) return false;
-
-        const isOIDCEnabled = config?.security?.oidc?.enabled;
-
-        if (hostCfg.protected || hostCfg.user_auth) {
-            // Check if allowed room for user from DB...
-            if (hostCfg.users_from_db && hostCfg.users_api_room_allowed) {
-                try {
-                    // Using either email or username, as the username can also be an email here.
-                    const response = await axios.post(
-                        hostCfg.users_api_room_allowed,
-                        {
-                            email: username,
-                            username: username,
-                            room: room,
-                            api_secret_key: hostCfg.users_api_secret_key,
-                        },
-                        {
-                            timeout: 5000, // Timeout set to 5 seconds (5000 milliseconds)
-                        },
-                    );
-                    log.debug('AXIOS isRoomAllowedForUser', { room: room, allowed: true });
-                    return response.data && response.data.message === true;
-                } catch (error) {
-                    log.error('AXIOS isRoomAllowedForUser error', error.message);
-                    return false;
-                }
-            }
-
-            const isInPresenterLists = hostCfg?.presenters?.list?.includes(username);
-
-            if (isInPresenterLists) {
-                log.debug('isRoomAllowedForUser - user in presenters list room allowed', room);
-                return true;
-            }
-
-            const user = hostCfg.users.find((user) => user.displayname === username || user.username === username);
-
-            if (!isOIDCEnabled && !user) {
-                log.debug('isRoomAllowedForUser - user not found', username);
-                return false;
-            }
-
-            if (
-                isOIDCEnabled ||
-                !user.allowed_rooms ||
-                (user.allowed_rooms && (user.allowed_rooms.includes('*') || user.allowed_rooms.includes(room)))
-            ) {
-                log.debug('isRoomAllowedForUser - user room allowed', room);
-                return true;
-            }
-
-            log.debug('isRoomAllowedForUser - user room not allowed', room);
+        if (!username || !room) {
+            log.debug('isRoomAllowedForUser - missing username or room', { username, room });
             return false;
         }
 
-        log.debug('isRoomAllowedForUser - No host protected or user_auth enabled, user room allowed', room);
-        return true;
+        const logData = { message, username, room };
+        log.debug('isRoomAllowedForUser ------>', logData);
+
+        try {
+            const isOIDCEnabled = config?.security?.oidc?.enabled;
+
+            if (hostCfg.protected || hostCfg.user_auth) {
+                // Check API first if configured
+                if (hostCfg.users_from_db && hostCfg.users_api_room_allowed) {
+                    try {
+                        const response = await axios.post(
+                            hostCfg.users_api_room_allowed,
+                            {
+                                email: username,
+                                username: username,
+                                room: room,
+                                api_secret_key: hostCfg.users_api_secret_key,
+                            },
+                            {
+                                timeout: hostCfg.users_api_timeout || 5000,
+                            }
+                        );
+
+                        if (response.data && (response.data === true || response.data.message === true)) {
+                            log.debug('AXIOS isRoomAllowedForUser - allowed access', { room, username });
+                            return true;
+                        }
+                        log.debug('AXIOS isRoomAllowedForUser - denied access', { room, username });
+                        return false;
+                    } catch (error) {
+                        log.error('AXIOS isRoomAllowedForUser - check failed', error.message);
+                        // Fail closed (deny access) if API check fails
+                        return false;
+                    }
+                }
+
+                // Check presenter list
+                if (hostCfg?.presenters?.list?.includes(username)) {
+                    log.debug('isRoomAllowedForUser - User in presenters list', { username });
+                    return true;
+                }
+
+                // Find user in configuration
+                const user = hostCfg.users?.find((u) => u.displayname === username || u.username === username);
+
+                // For OIDC, we might want additional checks even when enabled
+                if (isOIDCEnabled) {
+                    log.debug('isRoomAllowedForUser - OIDC enabled, allowing access', { username });
+                    return true;
+                }
+
+                if (!user) {
+                    log.debug('isRoomAllowedForUser - User not found in configuration', { username });
+                    return false;
+                }
+
+                // Check allowed rooms
+                const isAllowed =
+                    !user.allowed_rooms || user.allowed_rooms.includes('*') || user.allowed_rooms.includes(room);
+
+                log.debug(
+                    isAllowed ? 'isRoomAllowedForUser - Room allowed' : 'isRoomAllowedForUser - Room not allowed',
+                    { room, username }
+                );
+                return isAllowed;
+            }
+
+            log.debug('isRoomAllowedForUser - No protection enabled, allowing access', { room, username });
+            return true;
+        } catch (error) {
+            log.error('isRoomAllowedForUser - Unexpected error', error);
+            return false; // Fail closed
+        }
     }
 
     async function getPeerGeoLocation(ip) {
