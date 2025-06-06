@@ -9158,7 +9158,7 @@ class RoomClient {
                             'warning',
                             peer_name + '  ' + _PEER.raiseHand + ' has raised the hand',
                             'top-end',
-                            3000,
+                            3000
                         );
                         this.sound('raiseHand');
                     } else {
