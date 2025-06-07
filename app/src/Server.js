@@ -287,11 +287,13 @@ const views = {
     permission: path.join(__dirname, '../../', 'public/views/permission.html'),
     privacy: path.join(__dirname, '../../', 'public/views/privacy.html'),
     room: path.join(__dirname, '../../', 'public/views/Room.html'),
+    speakerRoom: path.join(__dirname, '../../', 'public/views/SpeakerRoom.html'),
+    testSpeakerRoom: path.join(__dirname, '../../', 'public/views/test-speaker-room.html'),
     rtmpStreamer: path.join(__dirname, '../../', 'public/views/RtmpStreamer.html'),
     whoAreYou: path.join(__dirname, '../../', 'public/views/whoAreYou.html'),
 };
 
-const filesPath = [views.landing, views.newRoom, views.room, views.login];
+const filesPath = [views.landing, views.newRoom, views.room, views.speakerRoom, views.login];
 
 const htmlInjector = new HtmlInjector(filesPath, config.ui.brand);
 
@@ -764,6 +766,46 @@ function startServer() {
         }
     });
 
+    // join speaker room by id (mic-only visibility) - shares same room as regular /join/:roomId
+    app.get('/speaker/:roomId', async (req, res) => {
+        //
+        const { roomId } = checkXSS(req.params);
+
+        if (!roomId) {
+            log.warn('/speaker/:roomId empty', roomId);
+            return res.redirect('/');
+        }
+
+        if (!Validator.isValidRoomName(roomId)) {
+            log.warn('/speaker/:roomId invalid', roomId);
+            return res.redirect('/');
+        }
+
+        // Use same room access logic as regular rooms, but serve speaker room UI
+        const allowRoomAccess = isAllowedRoomAccess('/speaker/:roomId', req, hostCfg, roomList, roomId);
+
+        if (allowRoomAccess) {
+            // 1. Protect room access with database check
+            if (!OIDC.enabled && hostCfg.protected && hostCfg.users_from_db) {
+                const roomExists = await roomExistsForUser(roomId);
+                log.debug('/speaker/:roomId exists from API endpoint', roomExists);
+                return roomExists ? htmlInjector.injectHtml(views.speakerRoom, res) : res.redirect('/login');
+            }
+            // 2. Protect room access with configuration check
+            if (!OIDC.enabled && hostCfg.protected && !hostCfg.users_from_db) {
+                const roomExists = hostCfg.users.some(
+                    (user) => user.allowed_rooms && (user.allowed_rooms.includes(roomId) || roomList.has(roomId))
+                );
+                log.debug('/speaker/:roomId exists from config allowed rooms', roomExists);
+                return roomExists ? htmlInjector.injectHtml(views.speakerRoom, res) : res.redirect('/whoAreYou/' + roomId);
+            }
+            htmlInjector.injectHtml(views.speakerRoom, res);
+        } else {
+            // Who are you?
+            !OIDC.enabled && hostCfg.protected ? res.redirect('/whoAreYou/' + roomId) : res.redirect('/');
+        }
+    });
+
     // not specified correctly the room id
     app.get('/join/\\*', (req, res) => {
         res.redirect('/');
@@ -782,6 +824,11 @@ function startServer() {
     // mirotalk about
     app.get('/about', (req, res) => {
         res.sendFile(views.about);
+    });
+
+    // speaker room test page
+    app.get('/test-speaker', (req, res) => {
+        res.sendFile(views.testSpeakerRoom);
     });
 
     // Get stats endpoint

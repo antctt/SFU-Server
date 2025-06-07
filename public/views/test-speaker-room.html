@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiroTalk SFU - Speaker Room Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .room-type {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+        .room-type h2 {
+            color: #555;
+            margin-top: 0;
+        }
+        .room-type p {
+            color: #666;
+            margin: 10px 0;
+        }
+        .room-links {
+            margin: 15px 0;
+        }
+        .room-links a {
+            display: inline-block;
+            margin: 5px 10px 5px 0;
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .room-links a:hover {
+            background: #0056b3;
+        }
+        .speaker-room {
+            border-color: #28a745;
+        }
+        .speaker-room .room-links a {
+            background: #28a745;
+        }
+        .speaker-room .room-links a:hover {
+            background: #1e7e34;
+        }
+        .feature {
+            background: #e9ecef;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #007bff;
+        }
+        .speaker-feature {
+            border-left-color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 MiroTalk SFU - Room Types Test</h1>
+        
+        <div class="room-type">
+            <h2>📹 Regular Room</h2>
+            <p>Standard video conferencing room where all participants are visible regardless of their microphone status.</p>
+            <div class="feature">
+                ✅ All users visible in video grid
+            </div>
+            <div class="feature">
+                ✅ Standard MiroTalk SFU experience
+            </div>
+            <div class="room-links">
+                <a href="/join/test-room">Join Regular Room: test-room</a>
+                <a href="/join/demo">Join Regular Room: demo</a>
+            </div>
+        </div>
+
+        <div class="room-type speaker-room">
+            <h2>🎤 Speaker Room (Mic-Only View)</h2>
+            <p>Special room where only participants with <strong>open microphones</strong> are visible in the video grid.</p>
+            <div class="feature speaker-feature">
+                🎤 Only users with open mics are visible
+            </div>
+            <div class="feature speaker-feature">
+                👁️ Perfect for presentations and lectures
+            </div>
+            <div class="feature speaker-feature">
+                🔇 Users with muted mics are hidden from grid
+            </div>
+            <div class="room-links">
+                <a href="/speaker/test-room">Join Speaker Room: test-room</a>
+                <a href="/speaker/demo">Join Speaker Room: demo</a>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 5px;">
+            <h3>✅ UPDATED: Rooms Now Share Backend!</h3>
+            <p><strong>Both room types now connect to the same room on the server!</strong> Users in Regular Room and Speaker Room can talk to each other.</p>
+        </div>
+
+        <div style="margin-top: 20px; padding: 20px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 5px;">
+            <h3>🧪 Testing Instructions:</h3>
+            <ol>
+                <li><strong>Cross-Room Testing:</strong> Open <code>/join/test-room</code> in one tab and <code>/speaker/test-room</code> in another</li>
+                <li>Both users should see each other in participant lists</li>
+                <li>Audio/video communication should work between room types</li>
+                <li><strong>Regular Room behavior:</strong> Shows all users regardless of mic status</li>
+                <li><strong>Speaker Room behavior:</strong> Only shows users with open microphones</li>
+                <li>When you unmute in either room, you should appear in the Speaker Room view</li>
+                <li>When you mute, you should disappear from Speaker Room (but stay in Regular Room)</li>
+            </ol>
+        </div>
+    </div>
+</body>
+</html> 
