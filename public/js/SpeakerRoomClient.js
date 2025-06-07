@@ -2544,8 +2544,16 @@ class RoomClient {
                     this.setTippy(au.id, 'Audio status', 'bottom');
                 }
 
-                // SPEAKER ROOM: Apply visibility for local user's video
-                this.updatePeerVisibilityForSpeakerRoom(this.peer_id, this.peer_info.peer_audio);
+                // SPEAKER ROOM: Hide local user's video elements completely
+                console.log('[SpeakerRoom] Hiding local user video element:', d.id);
+                d.classList.add('speaker-room-hide-local');
+                elem.classList.add('speaker-room-hide-local');
+                p.classList.add('speaker-room-hide-local');
+                i.classList.add('speaker-room-hide-local');
+                pm.classList.add('speaker-room-hide-local');
+                
+                // Also call the general hiding method
+                this.hideLocalUserInSpeakerRoom();
 
                 handleAspectRatio();
                 console.log('[addProducer] Video-element-count', this.videoMediaContainer.childElementCount);
