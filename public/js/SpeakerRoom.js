@@ -505,11 +505,11 @@ function getRoomId() {
     } else {
         // Handle different URL patterns: /join/roomId or /speaker/roomId
         if (location.pathname.startsWith('/speaker/')) {
-            roomId = location.pathname.substring(9); // "/speaker/" = 9 characters
+            roomId = decodeURIComponent(location.pathname.substring(9)); // "/speaker/" = 9 characters
         } else if (location.pathname.startsWith('/join/')) {
-            roomId = location.pathname.substring(6); // "/join/" = 6 characters
+            roomId = decodeURIComponent(location.pathname.substring(6)); // "/join/" = 6 characters
         } else {
-            roomId = location.pathname.substring(6); // fallback for compatibility
+            roomId = decodeURIComponent(location.pathname.substring(6)); // fallback for compatibility
         }
     }
     

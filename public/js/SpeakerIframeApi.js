@@ -68,7 +68,7 @@ class SpeakerIframeApi {
         const protocol = 'https';
         
         // SPEAKER ROOM: Use /speaker/roomName format (path param), not query params
-        const roomName = this.options.room;
+        const roomName = encodeURIComponent(this.options.room);
         const baseUrl = `${protocol}://${this.domain}/speaker/${roomName}`;
         
         // Remove room from params since it's now in the path

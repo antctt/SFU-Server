@@ -498,7 +498,7 @@ function getQueryParam(param) {
 
 function getRoomId() {
     let queryRoomId = getQueryParam('room');
-    let roomId = queryRoomId ? queryRoomId : location.pathname.substring(6);
+    let roomId = queryRoomId ? queryRoomId : decodeURIComponent(location.pathname.substring(6));
     if (roomId == '') {
         roomId = makeId(12);
     }
