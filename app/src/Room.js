@@ -43,7 +43,7 @@ module.exports = class Room {
             video_start_privacy: false,
             audio_start_muted: false,
             video_start_hidden: false,
-            audio_cant_unmute: false,
+            audio_cant_unmute: true,
             video_cant_unhide: false,
             screen_cant_share: false,
             chat_cant_privately: false,

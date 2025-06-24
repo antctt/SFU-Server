@@ -23,7 +23,7 @@ class LocalStorage {
             moderator_video_start_privacy: false, // Everyone starts video in privacy mode
             moderator_audio_start_muted: false, // Everyone starts muted in the room
             moderator_video_start_hidden: false, // Everyone starts hidden in the room
-            moderator_audio_cant_unmute: false, // Everyone can't unmute themselves
+            moderator_audio_cant_unmute: true, // Everyone can't unmute themselves
             moderator_video_cant_unhide: false, // Everyone can't unhide themselves
             moderator_screen_cant_share: false, // Everyone can't share screen
             moderator_chat_cant_privately: false, // Everyone can't chat privately, only Public chat allowed
