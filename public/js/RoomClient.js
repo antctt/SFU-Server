@@ -8611,7 +8611,7 @@ class RoomClient {
         Swal.fire({
             background: swalBackground,
             position: 'center',
-            imageUrl: imageUrl,
+            imageUrl: window.innerWidth < 480 ? null : imageUrl,
             title: title,
             text: text,
             showDenyButton: true,
@@ -8619,6 +8619,7 @@ class RoomClient {
             denyButtonText: `No`,
             showClass: { popup: 'animate__animated animate__fadeInDown' },
             hideClass: { popup: 'animate__animated animate__fadeOutUp' },
+            width: window.innerWidth < 480 ? '90%' : '400px',
         }).then(async (result) => {
             if (result.isConfirmed) {
                 switch (type) {
