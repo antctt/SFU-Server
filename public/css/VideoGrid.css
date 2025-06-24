@@ -431,3 +431,12 @@ input[type='range'] {
         font-size: 12px;
     }
 }
+
+@media screen and (min-width: 1900px) {
+    .username {
+        font-size: 35px;
+        height: auto;
+        background: transparent;
+        border-radius: 0;
+    }
+}
