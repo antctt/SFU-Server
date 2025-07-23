@@ -506,7 +506,23 @@ module.exports = {
             token: false,
             slack: true,
             mattermost: true,
+            adminParticipants: true,
         },
+    },
+
+    // ==============================================
+    // Admin API Configuration
+    // ==============================================
+
+    admin: {
+        enabled: process.env.ADMIN_ENABLED === 'true',
+        apiKey: process.env.ADMIN_API_KEY || 'mirotalksfu_admin_secret',
+        vipParticipants: process.env.ADMIN_VIP_PARTICIPANTS
+            ? process.env.ADMIN_VIP_PARTICIPANTS.split(splitChar).map((name) => name.trim())
+            : [],
+        vipPatterns: process.env.ADMIN_VIP_PATTERNS
+            ? process.env.ADMIN_VIP_PATTERNS.split(splitChar).map((pattern) => pattern.trim())
+            : [],
     },
 
     // ==============================================

@@ -169,6 +169,8 @@ const hostCfg = {
     presenters: config?.security?.host?.presenters,
 };
 
+const adminCfg = config?.admin || {};
+
 const restApi = {
     basePath: '/api/v1', // api endpoint path
     docs: host + '/api/v1/docs', // api docs
@@ -1213,6 +1215,281 @@ function startServer() {
         }
 
         res.sendStatus(200);
+    });
+
+    // ====================================================
+    // Admin: list all participants across every room
+    // ====================================================
+    app.get(restApi.basePath + '/admin/participants', (req, res) => {
+        // Admin feature toggle
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+
+        // API-key check
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+
+        const participants = [];
+
+        roomList.forEach((room) => {
+            room.peers.forEach((peer) => {
+                const i = peer.peer_info || {};
+                const isVip =
+                    (adminCfg.vipParticipants || []).includes(i.peer_name) ||
+                    (adminCfg.vipPatterns || []).some((p) =>
+                        new RegExp('^' + p.replace(/\\*/g, '.*') + '$', 'i').test(i.peer_name)
+                    );
+
+                participants.push({
+                    id: i.peer_id,
+                    roomId: room.id,
+                    name: i.peer_name,
+                    isPresenter: i.peer_presenter,
+                    isAudioEnabled: !!i.peer_audio,
+                    isVideoEnabled: !!i.peer_video,
+                    isScreenSharing: !!i.peer_screen,
+                    hasRaisedHand: !!i.peer_hand,
+                    isVip,
+                });
+            });
+        });
+
+        res.json({ participants });
+    });
+
+    // ====================================================
+    // Admin: toggle participant audio (mute / unmute)
+    // ====================================================
+    app.post(restApi.basePath + '/admin/participant/:participantId/toggle-audio', (req, res) => {
+        // Feature toggle
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+
+        // Auth check
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+
+        // Extract & sanitize participant id
+        const { participantId } = checkXSS(req.params);
+
+        let targetRoom = null;
+        let targetPeer = null;
+
+        // Locate the participant across all active rooms
+        roomList.forEach((room) => {
+            if (room.peers.has(participantId)) {
+                targetRoom = room;
+                targetPeer = room.peers.get(participantId);
+            }
+        });
+
+        if (!targetPeer || !targetRoom) {
+            return res.status(404).json({ error: 'Participant not found' });
+        }
+
+        // Decide action based on current audio state
+        const isAudioEnabled = !!targetPeer.peer_info?.peer_audio;
+        const action = isAudioEnabled ? 'mute' : 'unmute';
+
+        // Craft the same payload normally sent by a presenter
+        const data = {
+            from_peer_name: 'Admin',
+            from_peer_id: 'admin',
+            from_peer_uuid: 'admin-api',
+            to_peer_uuid: '',
+            peer_id: participantId,
+            action,
+            message: '',
+            broadcast: false,
+        };
+
+        // If we are muting, also lower the participant hand
+        if (action === 'mute' && targetPeer.peer_info) {
+            targetPeer.peer_info.peer_hand = false;
+        }
+
+        // Dispatch the action to the target participant only
+        targetRoom.sendTo(participantId, 'peerAction', data);
+
+        // Update server-side peer_info snapshot so the next admin query is accurate
+        if (targetPeer.peer_info) {
+            targetPeer.peer_info.peer_audio = action === 'unmute';
+        }
+
+        // In toggle-audio endpoint, after updating peer_audio and before return
+        // Broadcast hand lowered update to all peers so UI refreshes
+        if (action === 'mute') {
+            const handData = {
+                room_id: targetRoom.id,
+                peer_name: targetPeer.peer_info?.peer_name || '',
+                peer_id: participantId,
+                type: 'hand',
+                status: false,
+                broadcast: true,
+            };
+            targetRoom.broadCast(participantId, 'updatePeerInfo', handData);
+            targetRoom.sendTo(participantId, 'updatePeerInfo', handData);
+        }
+
+        return res.json({ participantId, action });
+    });
+
+    // ====================================================
+    // Admin: enable participant audio (force unmute)
+    // ====================================================
+    app.post(restApi.basePath + '/admin/participant/:participantId/enable-audio', (req, res) => {
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+        const { participantId } = checkXSS(req.params);
+        let targetRoom = null;
+        let targetPeer = null;
+        roomList.forEach((room) => {
+            if (room.peers.has(participantId)) {
+                targetRoom = room;
+                targetPeer = room.peers.get(participantId);
+            }
+        });
+        if (!targetPeer || !targetRoom) {
+            return res.status(404).json({ error: 'Participant not found' });
+        }
+        // If already unmuted, skip action
+        if (targetPeer.peer_info && targetPeer.peer_info.peer_audio) {
+            return res.status(200).json({ participantId, action: 'noop', reason: 'already unmuted' });
+        }
+        const data = {
+            from_peer_name: 'Admin',
+            from_peer_id: 'admin',
+            from_peer_uuid: 'admin-api',
+            to_peer_uuid: '',
+            peer_id: participantId,
+            action: 'unmute',
+            message: '',
+            broadcast: false,
+        };
+        targetRoom.sendTo(participantId, 'peerAction', data);
+        if (targetPeer.peer_info) {
+            targetPeer.peer_info.peer_audio = true;
+        }
+        return res.json({ participantId, action: 'unmute' });
+    });
+
+    // ====================================================
+    // Admin: disable participant audio (force mute)
+    // ====================================================
+    app.post(restApi.basePath + '/admin/participant/:participantId/disable-audio', (req, res) => {
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+        const { participantId } = checkXSS(req.params);
+        let targetRoom = null;
+        let targetPeer = null;
+        roomList.forEach((room) => {
+            if (room.peers.has(participantId)) {
+                targetRoom = room;
+                targetPeer = room.peers.get(participantId);
+            }
+        });
+        if (!targetPeer || !targetRoom) {
+            return res.status(404).json({ error: 'Participant not found' });
+        }
+        // If already muted, skip action
+        if (targetPeer.peer_info && !targetPeer.peer_info.peer_audio) {
+            return res.status(200).json({ participantId, action: 'noop', reason: 'already muted' });
+        }
+        const data = {
+            from_peer_name: 'Admin',
+            from_peer_id: 'admin',
+            from_peer_uuid: 'admin-api',
+            to_peer_uuid: '',
+            peer_id: participantId,
+            action: 'mute',
+            message: '',
+            broadcast: false,
+        };
+        // Lower raised hand as part of muting
+        if (targetPeer.peer_info) {
+            targetPeer.peer_info.peer_hand = false;
+        }
+        targetRoom.sendTo(participantId, 'peerAction', data);
+        if (targetPeer.peer_info) {
+            targetPeer.peer_info.peer_audio = false;
+        }
+        // In disable-audio endpoint, after setting peer_audio false and before return
+        // Broadcast hand lowered update
+        const handData = {
+            room_id: targetRoom.id,
+            peer_name: targetPeer.peer_info?.peer_name || '',
+            peer_id: participantId,
+            type: 'hand',
+            status: false,
+            broadcast: true,
+        };
+        targetRoom.broadCast(participantId, 'updatePeerInfo', handData);
+        targetRoom.sendTo(participantId, 'updatePeerInfo', handData);
+        return res.json({ participantId, action: 'mute' });
+    });
+
+    // ====================================================
+    // Admin: mute all non-VIP participants (bulk mute)
+    // ====================================================
+    app.post(restApi.basePath + '/admin/mute-all', (req, res) => {
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+
+        let mutedCount = 0;
+
+        // Helper to detect VIP names / patterns
+        const isVipName = (name = '') => {
+            if (!name) return false;
+            const exact = (adminCfg.vipParticipants || []).includes(name);
+            if (exact) return true;
+            return (adminCfg.vipPatterns || []).some((p) => new RegExp('^' + p.replace(/\*/g, '.*') + '$', 'i').test(name));
+        };
+
+        roomList.forEach((room) => {
+            room.peers.forEach((peer, peer_id) => {
+                const info = peer.peer_info || {};
+                if (isVipName(info.peer_name)) return; // skip VIP
+                if (!info.peer_audio) return; // already muted
+
+                // Update server state
+                info.peer_audio = false;
+                info.peer_hand = false;
+                mutedCount++;
+
+                // Notify the participant
+                const actionData = {
+                    from_peer_name: 'Admin',
+                    from_peer_id: 'admin',
+                    from_peer_uuid: 'admin-api',
+                    to_peer_uuid: '',
+                    peer_id: peer_id,
+                    action: 'mute',
+                    message: '',
+                    broadcast: false,
+                };
+                room.sendTo(peer_id, 'peerAction', actionData);
+
+                // Broadcast UI update for hand lowered
+                const handData = {
+                    room_id: room.id,
+                    peer_name: info.peer_name,
+                    peer_id: peer_id,
+                    type: 'hand',
+                    status: false,
+                    broadcast: true,
+                };
+                room.broadCast(peer_id, 'updatePeerInfo', handData);
+                room.sendTo(peer_id, 'updatePeerInfo', handData);
+            });
+        });
+
+        return res.json({ muted: mutedCount });
     });
 
     // Join roomId redirect to /join?room=roomId
@@ -3896,6 +4173,44 @@ function startServer() {
             }
         }
     }
+
+    // Admin: list all participants across every room
+    app.get(restApi.basePath + '/admin/participants', (req, res) => {
+        // Admin feature toggle
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+
+        // API-key check
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+
+        const participants = [];
+
+        roomList.forEach((room) => {
+            room.peers.forEach((peer) => {
+                const i = peer.peer_info || {};
+                const isVip =
+                    (adminCfg.vipParticipants || []).includes(i.peer_name) ||
+                    (adminCfg.vipPatterns || []).some((p) =>
+                        new RegExp('^' + p.replace(/\\*/g, '.*') + '$', 'i').test(i.peer_name)
+                    );
+
+                participants.push({
+                    id: i.peer_id,
+                    roomId: room.id,
+                    name: i.peer_name,
+                    isPresenter: i.peer_presenter,
+                    isAudioEnabled: !!i.peer_audio,
+                    isVideoEnabled: !!i.peer_video,
+                    isScreenSharing: !!i.peer_screen,
+                    hasRaisedHand: !!i.peer_hand,
+                    isVip,
+                });
+            });
+        });
+
+        res.json({ participants });
+    });
 }
 
 process.on('SIGINT', () => {
