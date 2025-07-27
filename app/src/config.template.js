@@ -1467,8 +1467,8 @@ module.exports = {
                  */
                 {
                     protocol: 'udp',
-                    ip: LISTEN_IP, // Local IP to bind to
-                    announcedAddress: IPv4, // Public IP sent to clients
+                    ip: '0.0.0.0', // Local IP to bind to
+                    announcedAddress: '86.126.135.232', // Public IP sent to clients
                     portRange: {
                         min: RTC_MIN_PORT,
                         max: RTC_MIN_PORT + NUM_WORKERS, // Port range per worker
@@ -1483,8 +1483,8 @@ module.exports = {
                  */
                 {
                     protocol: 'tcp',
-                    ip: LISTEN_IP,
-                    announcedAddress: IPv4,
+                    ip: '0.0.0.0',
+                    announcedAddress: '86.126.135.232',
                     portRange: {
                         min: RTC_MIN_PORT,
                         max: RTC_MIN_PORT + NUM_WORKERS,
@@ -1520,8 +1520,8 @@ module.exports = {
                  */
                 {
                     protocol: 'udp',
-                    ip: LISTEN_IP,
-                    announcedAddress: IPv4,
+                    ip: '0.0.0.0',
+                    announcedAddress: '86.126.135.232',
                     portRange: {
                         min: RTC_MIN_PORT,
                         max: RTC_MAX_PORT, // Wider range than WebRtcServer
@@ -1535,8 +1535,8 @@ module.exports = {
                  */
                 {
                     protocol: 'tcp',
-                    ip: LISTEN_IP,
-                    announcedAddress: IPv4,
+                    ip: '0.0.0.0',
+                    announcedAddress: '86.126.135.232',
                     portRange: {
                         min: RTC_MIN_PORT,
                         max: RTC_MAX_PORT,
