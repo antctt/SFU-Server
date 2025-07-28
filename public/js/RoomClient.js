@@ -9155,6 +9155,10 @@ class RoomClient {
                     let peer_hand = this.getPeerHandBtn(peer_id);
                     if (status) {
                         if (peer_hand) peer_hand.style.display = 'flex';
+                        // Trigger UI update if this is the local user
+                        if (peer_id === this.peer_id) {
+                            this.event(_EVENTS.raiseHand);
+                        }
                         this.userLog(
                             'warning',
                             peer_name + '  ' + _PEER.raiseHand + ' has raised the hand',
@@ -9164,6 +9168,10 @@ class RoomClient {
                         this.sound('raiseHand');
                     } else {
                         if (peer_hand) peer_hand.style.display = 'none';
+                        // Trigger UI update if this is the local user
+                        if (peer_id === this.peer_id) {
+                            this.event(_EVENTS.lowerHand);
+                        }
                     }
                     break;
                 default:

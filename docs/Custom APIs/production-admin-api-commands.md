@@ -70,6 +70,21 @@ curl -X POST "https://conf.sector5.ro/api/v1/admin/mute-all" \
 curl -X POST "https://conf.sector5.ro/api/v1/admin/mute-all" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
+### 5. Lower Participant Hand
+
+**Bash/Linux/macOS:**
+
+```bash
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/lower-hand" \
+  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+```
+
+**Windows Command Prompt:**
+
+```cmd
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/lower-hand" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+```
+
 ## Quick Test Commands
 
 ### Test Connection and Get Participants (with pretty printing)

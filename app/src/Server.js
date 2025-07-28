@@ -1303,9 +1303,9 @@ function startServer() {
             broadcast: false,
         };
 
-        // If we are muting, also lower the participant hand
-        if (action === 'mute' && targetPeer.peer_info) {
-            targetPeer.peer_info.peer_hand = false;
+        // If muting -> lower the hand via helper
+        if (action === 'mute') {
+            lowerHand(targetRoom, targetPeer, participantId);
         }
 
         // Dispatch the action to the target participant only
@@ -1314,21 +1314,6 @@ function startServer() {
         // Update server-side peer_info snapshot so the next admin query is accurate
         if (targetPeer.peer_info) {
             targetPeer.peer_info.peer_audio = action === 'unmute';
-        }
-
-        // In toggle-audio endpoint, after updating peer_audio and before return
-        // Broadcast hand lowered update to all peers so UI refreshes
-        if (action === 'mute') {
-            const handData = {
-                room_id: targetRoom.id,
-                peer_name: targetPeer.peer_info?.peer_name || '',
-                peer_id: participantId,
-                type: 'hand',
-                status: false,
-                broadcast: true,
-            };
-            targetRoom.broadCast(participantId, 'updatePeerInfo', handData);
-            targetRoom.sendTo(participantId, 'updatePeerInfo', handData);
         }
 
         return res.json({ participantId, action });
@@ -1409,26 +1394,14 @@ function startServer() {
             message: '',
             broadcast: false,
         };
-        // Lower raised hand as part of muting
-        if (targetPeer.peer_info) {
-            targetPeer.peer_info.peer_hand = false;
-        }
         targetRoom.sendTo(participantId, 'peerAction', data);
         if (targetPeer.peer_info) {
             targetPeer.peer_info.peer_audio = false;
         }
-        // In disable-audio endpoint, after setting peer_audio false and before return
-        // Broadcast hand lowered update
-        const handData = {
-            room_id: targetRoom.id,
-            peer_name: targetPeer.peer_info?.peer_name || '',
-            peer_id: participantId,
-            type: 'hand',
-            status: false,
-            broadcast: true,
-        };
-        targetRoom.broadCast(participantId, 'updatePeerInfo', handData);
-        targetRoom.sendTo(participantId, 'updatePeerInfo', handData);
+
+        // Lower the hand and broadcast update
+        lowerHand(targetRoom, targetPeer, participantId);
+
         return res.json({ participantId, action: 'mute' });
     });
 
@@ -1459,7 +1432,6 @@ function startServer() {
 
                 // Update server state
                 info.peer_audio = false;
-                info.peer_hand = false;
                 mutedCount++;
 
                 // Notify the participant
@@ -1475,21 +1447,38 @@ function startServer() {
                 };
                 room.sendTo(peer_id, 'peerAction', actionData);
 
-                // Broadcast UI update for hand lowered
-                const handData = {
-                    room_id: room.id,
-                    peer_name: info.peer_name,
-                    peer_id: peer_id,
-                    type: 'hand',
-                    status: false,
-                    broadcast: true,
-                };
-                room.broadCast(peer_id, 'updatePeerInfo', handData);
-                room.sendTo(peer_id, 'updatePeerInfo', handData);
+                // Lower hand & notify
+                lowerHand(room, peer, peer_id);
             });
         });
 
         return res.json({ muted: mutedCount });
+    });
+
+    // ====================================================
+    // Admin: lower participant raised hand
+    // ====================================================
+    app.post(restApi.basePath + '/admin/participant/:participantId/lower-hand', (req, res) => {
+        if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
+        if (req.headers.authorization !== adminCfg.apiKey) {
+            return res.status(403).json({ error: 'Unauthorized!' });
+        }
+        const { participantId } = checkXSS(req.params);
+        let targetRoom = null;
+        let targetPeer = null;
+        roomList.forEach((room) => {
+            if (room.peers.has(participantId)) {
+                targetRoom = room;
+                targetPeer = room.peers.get(participantId);
+            }
+        });
+        if (!targetPeer || !targetRoom) {
+            return res.status(404).json({ error: 'Participant not found' });
+        }
+
+        lowerHand(targetRoom, targetPeer, participantId);
+
+        return res.json({ participantId, action: 'handLowered' });
     });
 
     // Join roomId redirect to /join?room=roomId
@@ -4211,6 +4200,25 @@ function startServer() {
 
         res.json({ participants });
     });
+
+    // Helper to lower a participant hand and notify clients
+    function lowerHand(targetRoom, targetPeer, participantId) {
+        if (!targetRoom || !targetPeer) return;
+        if (targetPeer.peer_info) {
+            targetPeer.peer_info.peer_hand = false;
+        }
+        const handData = {
+            room_id: targetRoom.id,
+            peer_name: targetPeer.peer_info?.peer_name || '',
+            peer_id: participantId,
+            type: 'hand',
+            status: false,
+            broadcast: true,
+        };
+        // Broadcast to everyone and also send directly so local UI updates
+        targetRoom.broadCast(participantId, 'updatePeerInfo', handData);
+        targetRoom.sendTo(participantId, 'updatePeerInfo', handData);
+    }
 }
 
 process.on('SIGINT', () => {
