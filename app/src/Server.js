@@ -1260,7 +1260,7 @@ function startServer() {
     // ====================================================
     // Admin: toggle participant audio (mute / unmute)
     // ====================================================
-    app.post(restApi.basePath + '/admin/participant/:participantId/toggle-audio', (req, res) => {
+    app.post(restApi.basePath + '/admin/participant/:participantName/toggle-audio', (req, res) => {
         // Feature toggle
         if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
 
@@ -1269,18 +1269,22 @@ function startServer() {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
 
-        // Extract & sanitize participant id
-        const { participantId } = checkXSS(req.params);
+        // Extract & sanitize participant name
+        const { participantName } = checkXSS(req.params);
 
         let targetRoom = null;
         let targetPeer = null;
+        let targetPeerId = null;
 
-        // Locate the participant across all active rooms
+        // Locate the participant by name across all active rooms (first match)
         roomList.forEach((room) => {
-            if (room.peers.has(participantId)) {
-                targetRoom = room;
-                targetPeer = room.peers.get(participantId);
-            }
+            room.peers.forEach((peer, peer_id) => {
+                if (peer.peer_info?.peer_name === participantName) {
+                    targetRoom = room;
+                    targetPeer = peer;
+                    targetPeerId = peer_id;
+                }
+            });
         });
 
         if (!targetPeer || !targetRoom) {
@@ -1297,7 +1301,7 @@ function startServer() {
             from_peer_id: 'admin',
             from_peer_uuid: 'admin-api',
             to_peer_uuid: '',
-            peer_id: participantId,
+            peer_id: targetPeerId,
             action,
             message: '',
             broadcast: false,
@@ -1305,104 +1309,112 @@ function startServer() {
 
         // If muting -> lower the hand via helper
         if (action === 'mute') {
-            lowerHand(targetRoom, targetPeer, participantId);
+            lowerHand(targetRoom, targetPeer, targetPeerId);
         }
 
         // Dispatch the action to the target participant only
-        targetRoom.sendTo(participantId, 'peerAction', data);
+        targetRoom.sendTo(targetPeerId, 'peerAction', data);
 
         // Update server-side peer_info snapshot so the next admin query is accurate
         if (targetPeer.peer_info) {
             targetPeer.peer_info.peer_audio = action === 'unmute';
         }
 
-        return res.json({ participantId, action });
+        return res.json({ participantName, peerId: targetPeerId, action });
     });
 
     // ====================================================
     // Admin: enable participant audio (force unmute)
     // ====================================================
-    app.post(restApi.basePath + '/admin/participant/:participantId/enable-audio', (req, res) => {
+    app.post(restApi.basePath + '/admin/participant/:participantName/enable-audio', (req, res) => {
         if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
         if (req.headers.authorization !== adminCfg.apiKey) {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
-        const { participantId } = checkXSS(req.params);
+        const { participantName } = checkXSS(req.params);
         let targetRoom = null;
         let targetPeer = null;
+        let targetPeerId = null;
         roomList.forEach((room) => {
-            if (room.peers.has(participantId)) {
-                targetRoom = room;
-                targetPeer = room.peers.get(participantId);
-            }
+            room.peers.forEach((peer, peer_id) => {
+                if (peer.peer_info?.peer_name === participantName) {
+                    targetRoom = room;
+                    targetPeer = peer;
+                    targetPeerId = peer_id;
+                }
+            });
         });
         if (!targetPeer || !targetRoom) {
             return res.status(404).json({ error: 'Participant not found' });
         }
         // If already unmuted, skip action
         if (targetPeer.peer_info && targetPeer.peer_info.peer_audio) {
-            return res.status(200).json({ participantId, action: 'noop', reason: 'already unmuted' });
+            return res.status(200).json({ participantName, peerId: targetPeerId, action: 'noop', reason: 'already unmuted' });
         }
         const data = {
             from_peer_name: 'Admin',
             from_peer_id: 'admin',
             from_peer_uuid: 'admin-api',
             to_peer_uuid: '',
-            peer_id: participantId,
+            peer_id: targetPeerId,
             action: 'unmute',
             message: '',
             broadcast: false,
         };
-        targetRoom.sendTo(participantId, 'peerAction', data);
+        targetRoom.sendTo(targetPeerId, 'peerAction', data);
         if (targetPeer.peer_info) {
             targetPeer.peer_info.peer_audio = true;
         }
-        return res.json({ participantId, action: 'unmute' });
+        return res.json({ participantName, peerId: targetPeerId, action: 'unmute' });
     });
 
     // ====================================================
     // Admin: disable participant audio (force mute)
     // ====================================================
-    app.post(restApi.basePath + '/admin/participant/:participantId/disable-audio', (req, res) => {
+    app.post(restApi.basePath + '/admin/participant/:participantName/disable-audio', (req, res) => {
         if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
         if (req.headers.authorization !== adminCfg.apiKey) {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
-        const { participantId } = checkXSS(req.params);
+        const { participantName } = checkXSS(req.params);
         let targetRoom = null;
         let targetPeer = null;
+        let targetPeerId = null;
         roomList.forEach((room) => {
-            if (room.peers.has(participantId)) {
-                targetRoom = room;
-                targetPeer = room.peers.get(participantId);
-            }
+            room.peers.forEach((peer, peer_id) => {
+                if (peer.peer_info?.peer_name === participantName) {
+                    targetRoom = room;
+                    targetPeer = peer;
+                    targetPeerId = peer_id;
+                }
+            });
         });
         if (!targetPeer || !targetRoom) {
             return res.status(404).json({ error: 'Participant not found' });
         }
         // If already muted, skip action
         if (targetPeer.peer_info && !targetPeer.peer_info.peer_audio) {
-            return res.status(200).json({ participantId, action: 'noop', reason: 'already muted' });
+            return res.status(200).json({ participantName, peerId: targetPeerId, action: 'noop', reason: 'already muted' });
         }
         const data = {
             from_peer_name: 'Admin',
             from_peer_id: 'admin',
             from_peer_uuid: 'admin-api',
             to_peer_uuid: '',
-            peer_id: participantId,
+            peer_id: targetPeerId,
             action: 'mute',
             message: '',
             broadcast: false,
         };
-        targetRoom.sendTo(participantId, 'peerAction', data);
+        targetRoom.sendTo(targetPeerId, 'peerAction', data);
         if (targetPeer.peer_info) {
             targetPeer.peer_info.peer_audio = false;
         }
 
         // Lower the hand and broadcast update
-        lowerHand(targetRoom, targetPeer, participantId);
+        lowerHand(targetRoom, targetPeer, targetPeerId);
 
-        return res.json({ participantId, action: 'mute' });
+        return res.json({ participantName, peerId: targetPeerId, action: 'mute' });
     });
 
     // ====================================================
@@ -1458,27 +1470,31 @@ function startServer() {
     // ====================================================
     // Admin: lower participant raised hand
     // ====================================================
-    app.post(restApi.basePath + '/admin/participant/:participantId/lower-hand', (req, res) => {
+    app.post(restApi.basePath + '/admin/participant/:participantName/lower-hand', (req, res) => {
         if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
         if (req.headers.authorization !== adminCfg.apiKey) {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
-        const { participantId } = checkXSS(req.params);
+        const { participantName } = checkXSS(req.params);
         let targetRoom = null;
         let targetPeer = null;
+        let targetPeerId = null;
         roomList.forEach((room) => {
-            if (room.peers.has(participantId)) {
-                targetRoom = room;
-                targetPeer = room.peers.get(participantId);
-            }
+            room.peers.forEach((peer, peer_id) => {
+                if (peer.peer_info?.peer_name === participantName) {
+                    targetRoom = room;
+                    targetPeer = peer;
+                    targetPeerId = peer_id;
+                }
+            });
         });
         if (!targetPeer || !targetRoom) {
             return res.status(404).json({ error: 'Participant not found' });
         }
 
-        lowerHand(targetRoom, targetPeer, participantId);
+        lowerHand(targetRoom, targetPeer, targetPeerId);
 
-        return res.json({ participantId, action: 'handLowered' });
+        return res.json({ participantName, peerId: targetPeerId, action: 'handLowered' });
     });
 
     // Join roomId redirect to /join?room=roomId

@@ -5,7 +5,7 @@ This document contains curl commands for the MiroTalk SFU production admin APIs 
 ## Prerequisites
 
 - API Key: `"4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"`
-- Replace `"abc123"` with actual participant IDs from the `/participants` response
+- Replace `"John Doe"` with actual participant names from the `/participants` response
 - Ensure you have `curl` installed on your system
 
 ## API Commands
@@ -30,14 +30,14 @@ curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" -H "authorizatio
 **Bash/Linux/macOS:**
 
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/enable-audio" \
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/enable-audio" \
   -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 **Windows Command Prompt:**
 
 ```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/enable-audio" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%%20Doe/enable-audio" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ### 3. Disable Participant Audio
@@ -45,14 +45,14 @@ curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/enable-aud
 **Bash/Linux/macOS:**
 
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/disable-audio" \
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/disable-audio" \
   -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 **Windows Command Prompt:**
 
 ```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/disable-audio" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%%20Doe/disable-audio" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ### 4. Mute All Participants
@@ -75,14 +75,14 @@ curl -X POST "https://conf.sector5.ro/api/v1/admin/mute-all" -H "authorization: 
 **Bash/Linux/macOS:**
 
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/lower-hand" \
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/lower-hand" \
   -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 **Windows Command Prompt:**
 
 ```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/abc123/lower-hand" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%%20Doe/lower-hand" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ## Quick Test Commands
@@ -136,8 +136,9 @@ curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" -H "authorizatio
 
 ```json
 {
-  "success": true,
-  "message": "Participant audio toggled successfully"
+  "participantName": "John Doe",
+  "peerId": "abc123def456",
+  "action": "unmute"
 }
 ```
 
@@ -147,13 +148,15 @@ curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" -H "authorizatio
 - **HTTPS**: All production calls use HTTPS for secure communication
 - **Error Handling**: Check HTTP status codes and response messages for error details
 - **Rate Limiting**: Be mindful of API call frequency in production
+- **URL Encoding**: Participant names with spaces must be URL-encoded (e.g., "John Doe" becomes "John%20Doe")
+- **Name Matching**: Uses exact name matching (first match wins if duplicates exist)
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **401 Unauthorized**: Check that your admin API key is correct
-2. **404 Not Found**: Verify the participant ID exists
+2. **404 Not Found**: Verify the participant name exists (URL-encode spaces as %20)
 3. **403 Forbidden**: Ensure admin functionality is enabled in production
 4. **500 Internal Server Error**: Contact system administrator
 
