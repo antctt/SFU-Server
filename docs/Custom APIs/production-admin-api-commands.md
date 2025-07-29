@@ -12,95 +12,40 @@ This document contains curl commands for the MiroTalk SFU production admin APIs 
 
 ### 1. Get All Participants
 
-**Bash/Linux/macOS:**
-
 ```bash
-curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
-```
-
-**Windows Command Prompt:**
-
-```cmd
-curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl https://conf.sector5.ro/api/v1/admin/participants -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ### 2. Enable Participant Audio
 
-**Bash/Linux/macOS:**
-
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/enable-audio" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
-```
-
-**Windows Command Prompt:**
-
-```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%%20Doe/enable-audio" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/enable-audio -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ### 3. Disable Participant Audio
 
-**Bash/Linux/macOS:**
-
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/disable-audio" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
-```
-
-**Windows Command Prompt:**
-
-```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%%20Doe/disable-audio" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/disable-audio -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ### 4. Mute All Participants
 
-**Bash/Linux/macOS:**
-
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/mute-all" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
-```
-
-**Windows Command Prompt:**
-
-```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/mute-all" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST https://conf.sector5.ro/api/v1/admin/mute-all -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ### 5. Lower Participant Hand
 
-**Bash/Linux/macOS:**
-
 ```bash
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/lower-hand" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
-```
-
-**Windows Command Prompt:**
-
-```cmd
-curl -X POST "https://conf.sector5.ro/api/v1/admin/participant/John%%20Doe/lower-hand" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -X POST https://conf.sector5.ro/api/v1/admin/participant/John%20Doe/lower-hand -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 ## Quick Test Commands
 
 ### Test Connection and Get Participants (with pretty printing)
 
-**Bash/Linux/macOS:**
-
 ```bash
-curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e" \
-  | jq '.'
-```
-
-**Windows Command Prompt:**
-
-```cmd
-curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl https://conf.sector5.ro/api/v1/admin/participants -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e" | jq '.'
 ```
 
 ## Response Examples
@@ -165,14 +110,11 @@ curl -X GET "https://conf.sector5.ro/api/v1/admin/participants" -H "authorizatio
 **Verbose curl output:**
 
 ```bash
-curl -v -X GET "https://conf.sector5.ro/api/v1/admin/participants" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -v https://conf.sector5.ro/api/v1/admin/participants -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
 
 **Check HTTP status only:**
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" \
-  -X GET "https://conf.sector5.ro/api/v1/admin/participants" \
-  -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
+curl -s -o /dev/null -w "%{http_code}" https://conf.sector5.ro/api/v1/admin/participants -H "authorization: 4a1f9b7c2e8d4f6a9c3b5e7f1a2d3c4e"
 ```
