@@ -1260,6 +1260,29 @@ function startServer() {
     // ====================================================
     // Admin: toggle participant audio (mute / unmute)
     // ====================================================
+    function findParticipantByName(participantName, roomIdFilter = null) {
+        let targetRoom = null;
+        let targetPeer = null;
+        let targetPeerId = null;
+
+        // Exact, case-sensitive match. Optional roomId filter to disambiguate.
+        roomList.forEach((room) => {
+            if (roomIdFilter && room.id !== roomIdFilter) return;
+            room.peers.forEach((peer, peer_id) => {
+                // Prefer peer_info name, fallback to direct peer_name if present
+                const candidateName = (peer.peer_info?.peer_name || peer.peer_name || '').toString();
+                if (candidateName === participantName) {
+                    targetRoom = room;
+                    targetPeer = peer;
+                    targetPeerId = peer_id;
+                }
+            });
+        });
+
+        if (!targetRoom || !targetPeer) return null;
+        return { targetRoom, targetPeer, targetPeerId };
+    }
+
     app.post(restApi.basePath + '/admin/participant/:participantName/toggle-audio', (req, res) => {
         // Feature toggle
         if (!adminCfg.enabled) return res.status(403).json({ error: 'Admin API is disabled.' });
@@ -1272,24 +1295,12 @@ function startServer() {
         // Extract & sanitize participant name
         const { participantName } = checkXSS(req.params);
 
-        let targetRoom = null;
-        let targetPeer = null;
-        let targetPeerId = null;
-
-        // Locate the participant by name across all active rooms (first match)
-        roomList.forEach((room) => {
-            room.peers.forEach((peer, peer_id) => {
-                if (peer.peer_info?.peer_name === participantName) {
-                    targetRoom = room;
-                    targetPeer = peer;
-                    targetPeerId = peer_id;
-                }
-            });
-        });
-
-        if (!targetPeer || !targetRoom) {
+        const { roomId: roomIdFilter } = checkXSS(req.query);
+        const match = findParticipantByName(participantName, roomIdFilter);
+        if (!match) {
             return res.status(404).json({ error: 'Participant not found' });
         }
+        const { targetRoom, targetPeer, targetPeerId } = match;
 
         // Decide action based on current audio state
         const isAudioEnabled = !!targetPeer.peer_info?.peer_audio;
@@ -1332,21 +1343,12 @@ function startServer() {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
         const { participantName } = checkXSS(req.params);
-        let targetRoom = null;
-        let targetPeer = null;
-        let targetPeerId = null;
-        roomList.forEach((room) => {
-            room.peers.forEach((peer, peer_id) => {
-                if (peer.peer_info?.peer_name === participantName) {
-                    targetRoom = room;
-                    targetPeer = peer;
-                    targetPeerId = peer_id;
-                }
-            });
-        });
-        if (!targetPeer || !targetRoom) {
+        const { roomId: roomIdFilter } = checkXSS(req.query);
+        const match = findParticipantByName(participantName, roomIdFilter);
+        if (!match) {
             return res.status(404).json({ error: 'Participant not found' });
         }
+        const { targetRoom, targetPeer, targetPeerId } = match;
         // If already unmuted, skip action
         if (targetPeer.peer_info && targetPeer.peer_info.peer_audio) {
             return res.status(200).json({ participantName, peerId: targetPeerId, action: 'noop', reason: 'already unmuted' });
@@ -1377,21 +1379,12 @@ function startServer() {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
         const { participantName } = checkXSS(req.params);
-        let targetRoom = null;
-        let targetPeer = null;
-        let targetPeerId = null;
-        roomList.forEach((room) => {
-            room.peers.forEach((peer, peer_id) => {
-                if (peer.peer_info?.peer_name === participantName) {
-                    targetRoom = room;
-                    targetPeer = peer;
-                    targetPeerId = peer_id;
-                }
-            });
-        });
-        if (!targetPeer || !targetRoom) {
+        const { roomId: roomIdFilter } = checkXSS(req.query);
+        const match = findParticipantByName(participantName, roomIdFilter);
+        if (!match) {
             return res.status(404).json({ error: 'Participant not found' });
         }
+        const { targetRoom, targetPeer, targetPeerId } = match;
         // If already muted, skip action
         if (targetPeer.peer_info && !targetPeer.peer_info.peer_audio) {
             return res.status(200).json({ participantName, peerId: targetPeerId, action: 'noop', reason: 'already muted' });
@@ -1476,21 +1469,12 @@ function startServer() {
             return res.status(403).json({ error: 'Unauthorized!' });
         }
         const { participantName } = checkXSS(req.params);
-        let targetRoom = null;
-        let targetPeer = null;
-        let targetPeerId = null;
-        roomList.forEach((room) => {
-            room.peers.forEach((peer, peer_id) => {
-                if (peer.peer_info?.peer_name === participantName) {
-                    targetRoom = room;
-                    targetPeer = peer;
-                    targetPeerId = peer_id;
-                }
-            });
-        });
-        if (!targetPeer || !targetRoom) {
+        const { roomId: roomIdFilter } = checkXSS(req.query);
+        const match = findParticipantByName(participantName, roomIdFilter);
+        if (!match) {
             return res.status(404).json({ error: 'Participant not found' });
         }
+        const { targetRoom, targetPeer, targetPeerId } = match;
 
         lowerHand(targetRoom, targetPeer, targetPeerId);
 
