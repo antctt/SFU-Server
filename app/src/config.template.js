@@ -531,6 +531,20 @@ module.exports = {
 
     integrations: {
         /**
+         * Mic Controller Queue Integration
+         * ================================
+         * Calls external APIs when participants raise/lower their hand.
+         * - add (POST):   /api/queue/add?id=<uuid>&source=online&name=<displayName>[&party_name=<party>]
+         * - remove (DEL): /api/queue/remove/<uuid>
+         */
+        micController: {
+            enabled: process.env.MICCTRL_ENABLED === 'true',
+            baseUrl: process.env.MICCTRL_BASE_URL || 'https://mic-controller-backend.onrender.com',
+            apiKey: process.env.MICCTRL_API_KEY || '',
+            // Constant source value required by the external API
+            source: 'online',
+        },
+        /**
          * ChatGPT Integration Configuration
          * ================================
          * OpenAI API integration for AI-powered chat functionality

@@ -127,6 +127,9 @@ const qS = require('qs');
 const slackEnabled = config?.integrations?.slack?.enabled || false;
 const slackSigningSecret = config?.integrations?.slack?.signingSecret || '';
 
+// Mic Controller Queue integration
+const micCtrl = config?.integrations?.micController || {};
+
 const app = express();
 
 const options = {
@@ -1241,7 +1244,7 @@ function startServer() {
                     );
 
                 participants.push({
-                    id: i.peer_id,
+                    id: i.peer_uuid || i.peer_id,
                     roomId: room.id,
                     name: i.peer_name,
                     isPresenter: i.peer_presenter,
@@ -2681,6 +2684,64 @@ function startServer() {
             if (!peer) return;
 
             const data = checkXSS(dataObject);
+
+            // Mic Controller Queue integration: handle manual hand raise/lower
+            try {
+                const micEnabled = Boolean(micCtrl?.enabled) && Boolean(micCtrl?.baseUrl) && Boolean(micCtrl?.apiKey);
+                if (micEnabled && data?.type === 'hand') {
+                    const previousHand = Boolean(peer?.peer_info?.peer_hand);
+                    const nextHand = Boolean(data?.status);
+                    const hasChanged = previousHand !== nextHand;
+                    // Determine VIP by name/pattern; skip VIPs entirely
+                    const peerName = peer?.peer_info?.peer_name || '';
+                    const isVipName = (name = '') => {
+                        if (!name) return false;
+                        const exact = (adminCfg.vipParticipants || []).includes(name);
+                        if (exact) return true;
+                        return (adminCfg.vipPatterns || []).some((p) =>
+                            new RegExp('^' + p.replace(/\*/g, '.*') + '$', 'i').test(name)
+                        );
+                    };
+                    const isVip = isVipName(peerName);
+
+                    if (hasChanged && !isVip) {
+                        const id = peer?.peer_info?.peer_uuid || peer?.peer_info?.peer_id || socket.id;
+                        const baseUrl = micCtrl.baseUrl.replace(/\/$/, '');
+                        const headers = { 'X-API-Key': micCtrl.apiKey };
+                        if (nextHand === true) {
+                            // Manual raise → POST /api/queue/add?id=...&source=online&name=...
+                            axios
+                                .post(
+                                    `${baseUrl}/api/queue/add`,
+                                    null,
+                                    {
+                                        params: {
+                                            id,
+                                            source: micCtrl.source || 'online',
+                                            name: peerName,
+                                            // party_name intentionally omitted (optional and not available yet)
+                                        },
+                                        headers,
+                                        timeout: 5000,
+                                    }
+                                )
+                                .then(() => log.debug('MicCtrl add queued', { id, name: peerName }))
+                                .catch((err) => log.warn('MicCtrl add failed', { id, error: err?.message }));
+                        } else if (nextHand === false) {
+                            // Manual lower → DELETE /api/queue/remove/{id}
+                            axios
+                                .delete(`${baseUrl}/api/queue/remove/${encodeURIComponent(id)}`, {
+                                    headers,
+                                    timeout: 5000,
+                                })
+                                .then(() => log.debug('MicCtrl removed from queue', { id }))
+                                .catch((err) => log.warn('MicCtrl remove failed', { id, error: err?.message }));
+                        }
+                    }
+                }
+            } catch (err) {
+                log.warn('MicCtrl integration error', { error: err?.message });
+            }
 
             peer.updatePeerInfo(data);
 
@@ -4185,7 +4246,7 @@ function startServer() {
                     );
 
                 participants.push({
-                    id: i.peer_id,
+                    id: i.peer_uuid || i.peer_id,
                     roomId: room.id,
                     name: i.peer_name,
                     isPresenter: i.peer_presenter,
