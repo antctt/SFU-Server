@@ -129,6 +129,8 @@ const slackSigningSecret = config?.integrations?.slack?.signingSecret || '';
 
 // Mic Controller Queue integration
 const micCtrl = config?.integrations?.micController || {};
+// Party Lookup integration
+const partyLookup = config?.integrations?.partyLookup || {};
 
 const app = express();
 
@@ -2709,24 +2711,43 @@ function startServer() {
                         const baseUrl = micCtrl.baseUrl.replace(/\/$/, '');
                         const headers = { 'X-API-Key': micCtrl.apiKey };
                         if (nextHand === true) {
-                            // Manual raise → POST /api/queue/add?id=...&source=online&name=...
-                            axios
-                                .post(
-                                    `${baseUrl}/api/queue/add`,
-                                    null,
-                                    {
-                                        params: {
-                                            id,
-                                            source: micCtrl.source || 'online',
-                                            name: peerName,
-                                            // party_name intentionally omitted (optional and not available yet)
-                                        },
+                            // Optional party lookup (URL-encoded name with diacritics)
+                            const tryGetParty = async (displayName) => {
+                                try {
+                                    const enabled = Boolean(partyLookup?.enabled) && Boolean(partyLookup?.baseUrl) && Boolean(partyLookup?.apiKey);
+                                    if (!enabled) return null;
+                                    const pBase = partyLookup.baseUrl.replace(/\/$/, '');
+                                    const url = `${pBase}/api/users/party`;
+                                    const resp = await axios.get(url, {
+                                        params: { name: displayName },
+                                        headers: { 'X-API-Key': partyLookup.apiKey },
+                                        timeout: 5000,
+                                    });
+                                    if (resp?.data?.success) return resp.data.party_name || null;
+                                    return null;
+                                } catch (e) {
+                                    log.warn('Party lookup failed', { name: displayName, error: e?.message });
+                                    return null;
+                                }
+                            };
+
+                            (async () => {
+                                const partyName = await tryGetParty(peerName);
+                                const params = {
+                                    id,
+                                    source: micCtrl.source || 'online',
+                                    name: peerName,
+                                };
+                                if (partyName) params.party_name = partyName;
+                                axios
+                                    .post(`${baseUrl}/api/queue/add`, null, {
+                                        params,
                                         headers,
                                         timeout: 5000,
-                                    }
-                                )
-                                .then(() => log.debug('MicCtrl add queued', { id, name: peerName }))
-                                .catch((err) => log.warn('MicCtrl add failed', { id, error: err?.message }));
+                                    })
+                                    .then(() => log.debug('MicCtrl add queued', { id, name: peerName, party: partyName || undefined }))
+                                    .catch((err) => log.warn('MicCtrl add failed', { id, error: err?.message }));
+                            })();
                         } else if (nextHand === false) {
                             // Manual lower → DELETE /api/queue/remove/{id}
                             axios

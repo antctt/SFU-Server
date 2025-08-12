@@ -20,9 +20,9 @@ External API Calls
 - Add to queue (on raise):
   - Method: POST
   - URL: `{MICCTRL_BASE_URL}/api/queue/add`
-  - Query params: `id=<peer_uuid>&source=online&name=<displayName>`
+  - Query params: `id=<peer_uuid>&source=online&name=<displayName>[&party_name=<Party Name>]`
   - Headers: `X-API-Key: <MICCTRL_API_KEY>`
-  - Notes: `party_name` is optional and currently not used
+  - Notes: `party_name` is optional; if available from Party Lookup, it will be sent
 
 - Remove from queue (on manual lower):
   - Method: DELETE
@@ -67,7 +67,7 @@ Parameters
 - id          (required): participant stable id (peer_uuid)
 - source      (required): must be "online"
 - name        (required): display name (URL-encoded)
-- party_name  (optional): party name (URL-encoded)
+- party_name  (optional): party name (URL-encoded) resolved via Party Lookup
 ```
 
 Identity Used
@@ -86,6 +86,11 @@ Set the following environment variables in `.env` (already added in `.env.templa
 MICCTRL_ENABLED=true
 MICCTRL_BASE_URL=https://mic-controller-backend.onrender.com
 MICCTRL_API_KEY=your_key
+
+# Optional: Party Lookup (to resolve party_name)
+PARTY_LOOKUP_ENABLED=true
+PARTY_LOOKUP_BASE_URL=https://vot.sector5.ro
+PARTY_LOOKUP_API_KEY=your_party_lookup_key
 
 - MICCTRL_ENABLED: feature toggle
 - MICCTRL_BASE_URL: base URL of the Mic Controller backend
@@ -107,7 +112,7 @@ How to Test Locally
 2) `npm install` (first run), then `npm run start-dev`
 3) Open `http://localhost:3010/room-test` in two tabs, raise/lower hand
 4) Check server logs:
-   - On raise: `MicCtrl add queued`
+   - On raise: `MicCtrl add queued` (with party if resolved)
    - On manual lower: `MicCtrl removed from queue`
 5) VIPs (names/patterns) will not trigger calls
 

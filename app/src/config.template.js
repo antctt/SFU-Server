@@ -544,6 +544,19 @@ module.exports = {
             // Constant source value required by the external API
             source: 'online',
         },
+
+        /**
+         * Party Lookup Integration
+         * =======================
+         * Resolves a participant's party name by display name/username, including diacritics.
+         * - GET {baseUrl}/api/users/party?name=<url-encoded>
+         * - Header: X-API-Key
+         */
+        partyLookup: {
+            enabled: process.env.PARTY_LOOKUP_ENABLED === 'true',
+            baseUrl: process.env.PARTY_LOOKUP_BASE_URL || 'https://vot.sector5.ro',
+            apiKey: process.env.PARTY_LOOKUP_API_KEY || '',
+        },
         /**
          * ChatGPT Integration Configuration
          * ================================
