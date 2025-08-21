@@ -1568,20 +1568,13 @@ class RoomClient {
     async startLocalMedia() {
         console.log('08 ----> START LOCAL MEDIA...');
         const audioProducerExist = this.producerExist(mediaType.audio);
-        if (this.isAudioAllowed) {
-            if (!audioProducerExist) {
-                await this.produce(mediaType.audio, microphoneSelect.value);
-                console.log('09 ----> START AUDIO MEDIA');
-            }
-            if (this._moderator.audio_start_muted) {
-                await this.pauseAudioProducer();
-            }
-        } else {
-            if (isEnumerateAudioDevices && !audioProducerExist) {
-                await this.produce(mediaType.audio, microphoneSelect.value);
-                console.log('09 ----> START AUDIO MEDIA');
-                await this.pauseAudioProducer();
-            }
+        // SpeakerRoomClient: Always start with audio on
+        if (!audioProducerExist) {
+            await this.produce(mediaType.audio, microphoneSelect.value);
+            console.log('09 ----> START AUDIO MEDIA - SpeakerRoom auto-start');
+        }
+        if (this._moderator.audio_start_muted) {
+            await this.pauseAudioProducer();
         }
 
         if (this.isVideoAllowed && !this._moderator.video_start_hidden) {
