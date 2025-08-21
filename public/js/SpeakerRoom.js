@@ -2062,10 +2062,7 @@ function handleButtons() {
         }
     };
     startAudioButton.onclick = async () => {
-        const moderator = rc.getModerator();
-        if (moderator.audio_cant_unmute) {
-            return userLog('warning', 'The moderator does not allow you to unmute', 'top-end', 6000);
-        }
+        // SpeakerRoomClient users can always unmute (bypass moderator restriction)
         if (isPushToTalkActive) return;
         setAudioButtonsDisabled(true);
         if (!isEnumerateAudioDevices) await initEnumerateAudioDevices();
